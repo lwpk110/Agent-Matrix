@@ -55,6 +55,14 @@ export const SessionTabBar: React.FC<SessionTabBarProps> = ({
             {/* Title & Tag */}
             <span className="font-mono text-xs">{sess.tag}</span>
 
+            {/* Real Workspace Badge */}
+            {sess.isRealWorkspace && (
+              <span className="text-[9px] px-1 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/80 font-bold flex items-center gap-0.5 shadow-[0_0_8px_rgba(16,185,129,0.3)]">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {isZh ? '真实本地' : 'REAL'}
+              </span>
+            )}
+
             {/* Blocked or Step badge */}
             {isBlocked ? (
               <span className="text-[9px] px-1 rounded bg-rose-950 text-rose-300 border border-rose-600 font-bold animate-pulse">

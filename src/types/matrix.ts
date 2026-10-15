@@ -92,6 +92,25 @@ export interface FinOpsMetrics {
   totalSessionCost: number; // e.g. $0.42
 }
 
+export interface RealSystemStatus {
+  isReal: boolean;
+  cwd: string;
+  hostname: string;
+  platform?: string;
+  gitBranch: string;
+  gitStatus: string;
+  gitDiff?: string;
+  modifiedFiles: string[];
+  gitRecentCommit: string;
+  nodeVersion: string;
+  memoryUsageMB: number;
+  uptimeSec?: number;
+  activeClientsCount: number;
+  totalRealEvents: number;
+  hasClaudeHooks?: boolean;
+  timestamp: string;
+}
+
 export interface SessionWorkspace {
   id: string;
   tag: string;
@@ -107,6 +126,10 @@ export interface SessionWorkspace {
   subagents: SubagentTask[];
   isBlocked: boolean;
   pendingHitl?: HitlApprovalRequest;
+  isRealWorkspace?: boolean;
+  realCwd?: string;
+  realCommit?: string;
+  realModifiedFiles?: string[];
 }
 
 export interface AdvisorState {

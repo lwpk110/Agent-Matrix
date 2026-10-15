@@ -1,20 +1,19 @@
 /**
- * Real-time WebSocket Telemetry Bus Client
- * Connects to local AI Agent Gateway at ws://localhost:7788/ws
+ * Real-time WebSocket Telemetry Bus Client & Real Gateway API Bridge
+ * Connects to local server WebSocket (/ws) and 7788 security gateway.
  * Supports Claude Code PreToolUse/PostToolUse hooks and Codex CLI events.
  * Smoothly degrades to simulation mode with background heartbeat probe when offline.
  */
 
-import { WsConnectionState, HitlApprovalRequest, ToolCall } from '../types/matrix';
+import { WsConnectionState, HitlApprovalRequest, ToolCall, RealSystemStatus } from '../types/matrix';
 
 export type WsEventHandler = (event: {
-  type: 'tool_call' | 'hitl_blocked' | 'telemetry' | 'agent_state' | 'pong';
+  type: 'tool_call' | 'hitl_blocked' | 'telemetry' | 'agent_state' | 'pong' | 'system_status' | 'exec_result' | 'claude_hooks_configured';
   payload: unknown;
 }) => void;
 
 class WebSocketTelemetryBus {
   private ws: WebSocket | null = null;
-  private url: string = 'ws://localhost:7788/ws';
   private connectionState: WsConnectionState = 'probing';
   private reconnectTimer: number | null = null;
   private heartbeatTimer: number | null = null;
@@ -82,9 +81,23 @@ class WebSocketTelemetryBus {
 
     this.setState('probing');
 
-    // Dual target: try local 7788 first, or relative host
-    const targetUrl = this.retryAttempt % 2 === 0 ? 'ws://localhost:7788/ws' : 
-      (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws` : 'ws://localhost:7788/ws');
+    // First try the current host's WebSocket endpoint (/ws on port 3000), which hosts both web and ws.
+    // If running in pure external port 7788 standalone mode and on HTTP localhost, fallback to port 7788.
+    let targetUrl: string;
+    const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
+    const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+    if (isHttps) {
+      // Browsers forbid insecure ws:// on HTTPS pages; must connect to wss on current host
+      targetUrl = `wss://${window.location.host}/ws`;
+    } else if (isLocalhost && this.retryAttempt % 2 === 1) {
+      // Alternate retry to local port 7788 standalone gateway
+      targetUrl = 'ws://127.0.0.1:7788/ws';
+    } else if (typeof window !== 'undefined') {
+      targetUrl = `ws://${window.location.host}/ws`;
+    } else {
+      targetUrl = 'ws://localhost:3000/ws';
+    }
 
     try {
       this.ws = new WebSocket(targetUrl);
@@ -93,6 +106,10 @@ class WebSocketTelemetryBus {
         this.retryAttempt = 0;
         this.setState('connected');
         this.startHeartbeat();
+        // Request fresh system status immediately
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'request_system_status' }));
+        }
       };
 
       this.ws.onmessage = (event) => {
@@ -105,7 +122,6 @@ class WebSocketTelemetryBus {
       };
 
       this.ws.onerror = () => {
-        // Suppress noisy console error for dev server
         this.handleDisconnect();
       };
 
@@ -127,7 +143,7 @@ class WebSocketTelemetryBus {
     this.setState('simulation');
 
     if (!this.forceSimulation && !this.reconnectTimer) {
-      const delay = Math.min(3000 * Math.pow(1.5, Math.min(this.retryAttempt, 5)), 20000);
+      const delay = Math.min(2500 * Math.pow(1.4, Math.min(this.retryAttempt, 5)), 15000);
       this.retryAttempt++;
       this.reconnectTimer = window.setTimeout(() => {
         this.reconnectTimer = null;
@@ -166,6 +182,77 @@ class WebSocketTelemetryBus {
       this.ws.send(JSON.stringify(payload));
     }
     return payload;
+  }
+
+  /** REST: Fetch real local system and git status */
+  public async fetchRealStatus(): Promise<RealSystemStatus | null> {
+    try {
+      const res = await fetch('/api/real/status');
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {}
+    return null;
+  }
+
+  /** REST: Fetch real git diff text */
+  public async fetchGitDiff(): Promise<string> {
+    try {
+      const res = await fetch('/api/real/diff');
+      if (res.ok) {
+        const data = await res.json();
+        return data.diff || '';
+      }
+    } catch {}
+    return '';
+  }
+
+  /** REST: Execute real terminal command on the host */
+  public async executeCommand(command: string): Promise<{
+    command: string;
+    stdout: string;
+    stderr: string;
+    output: string;
+    exitCode: number;
+    durationMs: number;
+  }> {
+    const res = await fetch('/api/real/exec', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Execution failed' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  }
+
+  /** REST: Inject .claude/settings.json into current local repository */
+  public async setupClaudeHooks(): Promise<{
+    success: boolean;
+    message: string;
+    settingsPath: string;
+  }> {
+    const res = await fetch('/api/real/setup-claude-hooks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Hook setup failed' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  }
+
+  /** REST: Dispatch a real test hook event to verify the gateway round-trip */
+  public async triggerRealTest(risk: 'high' | 'normal' = 'normal'): Promise<any> {
+    const res = await fetch('/api/real/test-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ risk }),
+    });
+    return await res.json();
   }
 }
 

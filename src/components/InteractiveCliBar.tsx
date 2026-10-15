@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { MatrixMode } from '../types/matrix';
 import { Language, translations } from '../i18n/translations';
-import { Terminal, Send, Zap, ShieldAlert, Cpu, RefreshCw, FileText, ChevronDown, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Terminal, Send, Zap, ShieldAlert, Cpu, RefreshCw, FileText, ChevronDown, CheckCircle2, RotateCcw, Play, Check } from 'lucide-react';
 
 interface InteractiveCliBarProps {
   mode: MatrixMode;
   language: Language;
   isBlocked?: boolean;
+  hasClaudeHooks?: boolean;
   onApproveHitl?: () => void;
   onRollbackHitl?: () => void;
   onToggleMode: () => void;
@@ -16,12 +17,15 @@ interface InteractiveCliBarProps {
   onClearLogs: () => void;
   onOpenTuiModal: () => void;
   onExecuteCustomCommand: (cmd: string) => void;
+  onInjectClaudeHooks?: () => void;
+  onTriggerRealTest?: (risk: 'high' | 'normal') => void;
 }
 
 export const InteractiveCliBar: React.FC<InteractiveCliBarProps> = ({
   mode,
   language,
   isBlocked = false,
+  hasClaudeHooks = false,
   onApproveHitl,
   onRollbackHitl,
   onToggleMode,
@@ -31,11 +35,14 @@ export const InteractiveCliBar: React.FC<InteractiveCliBarProps> = ({
   onClearLogs,
   onOpenTuiModal,
   onExecuteCustomCommand,
+  onInjectClaudeHooks,
+  onTriggerRealTest,
 }) => {
   const t = translations[language];
   const isZh = language === 'zh';
   const [commandInput, setCommandInput] = useState('');
   const [showToolDropdown, setShowToolDropdown] = useState(false);
+  const [showRealTestDropdown, setShowRealTestDropdown] = useState(false);
 
   const cliPrompt =
     mode === 'codex'
@@ -61,12 +68,81 @@ export const InteractiveCliBar: React.FC<InteractiveCliBarProps> = ({
       {/* Top action button toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+          {/* Real Claude Hooks Quick Setup Button */}
+          {onInjectClaudeHooks && (
+            <button
+              onClick={onInjectClaudeHooks}
+              className={`px-2.5 py-1 rounded transition flex items-center gap-1 cursor-pointer font-bold shadow-sm border ${
+                hasClaudeHooks
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/60 hover:bg-emerald-900/90'
+                  : 'bg-teal-950/90 text-teal-200 border-teal-500 hover:bg-teal-900 shadow-[0_0_10px_rgba(45,212,191,0.25)]'
+              }`}
+              title={isZh ? '自动在当前工作区注入 .claude/settings.json 拦截钩子' : 'Inject .claude/settings.json hooks into current project'}
+            >
+              {hasClaudeHooks ? (
+                <Check className="w-3.5 h-3.5 text-emerald-400" />
+              ) : (
+                <Zap className="w-3.5 h-3.5 text-teal-400 animate-pulse" />
+              )}
+              <span>
+                {hasClaudeHooks
+                  ? isZh
+                    ? '已注入 Claude 钩子'
+                    : 'Claude Hooks Ready'
+                  : isZh
+                  ? '⚡ 注入 Claude 钩子'
+                  : '⚡ Inject Claude Hooks'}
+              </span>
+            </button>
+          )}
+
+          {/* Real Hook Test Button with Dropdown */}
+          {onTriggerRealTest && (
+            <div className="relative">
+              <button
+                onClick={() => setShowRealTestDropdown(!showRealTestDropdown)}
+                className="px-2.5 py-1 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-600/70 transition flex items-center gap-1 cursor-pointer font-bold shadow-sm"
+                title={isZh ? '通过 HTTP /hook/pre 发送真实工具调用或阻断事件以验证链路' : 'Send a real tool call to /hook/pre to test data bus'}
+              >
+                <Play className="w-3 h-3 text-indigo-400" />
+                <span>{isZh ? '🧪 真实 Hook 测试' : '🧪 Test Real Hook'}</span>
+                <ChevronDown className="w-3 h-3 text-indigo-400/80" />
+              </button>
+
+              {showRealTestDropdown && (
+                <div className="absolute left-0 bottom-full mb-1 w-64 bg-[#0a0e18] border border-indigo-600/60 rounded shadow-2xl py-1 z-50">
+                  <div className="px-2.5 py-1 text-[9px] text-indigo-400 uppercase font-semibold border-b border-slate-800">
+                    {isZh ? '选择真实测试调用' : 'Select Real Test Hook'}
+                  </div>
+                  <button
+                    onClick={() => {
+                      onTriggerRealTest('normal');
+                      setShowRealTestDropdown(false);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 text-[10px] text-slate-200 hover:bg-indigo-950/60 hover:text-indigo-300 transition flex items-center justify-between cursor-pointer"
+                  >
+                    <span>{isZh ? '1. 常规操作: git status (自动放行)' : '1. Normal tool: git status'}</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      onTriggerRealTest('high');
+                      setShowRealTestDropdown(false);
+                    }}
+                    className="w-full text-left px-2.5 py-1.5 text-[10px] text-rose-300 hover:bg-rose-950/60 transition flex items-center justify-between cursor-pointer"
+                  >
+                    <span>{isZh ? '2. 高危操作: 修改 auth.ts (触发熔断)' : '2. High-risk: Edit auth.ts (Block)'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Inject Tool Call button with dropdown */}
           <div className="relative">
             <button
               onClick={() => setShowToolDropdown(!showToolDropdown)}
               className="px-2.5 py-1 rounded bg-amber-950/70 hover:bg-amber-900/80 text-amber-300 border border-amber-700/60 transition flex items-center gap-1 cursor-pointer font-bold shadow-sm"
-              title="Inject a simulated tool call into the agent session"
+              title="Inject a tool call into the agent session"
             >
               <Zap className="w-3.5 h-3.5 text-amber-400" />
               <span>{t.injectToolCall}</span>
@@ -142,7 +218,7 @@ export const InteractiveCliBar: React.FC<InteractiveCliBarProps> = ({
           <button
             onClick={onRestartSubagents}
             className="px-2.5 py-1 rounded bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-700/60 transition flex items-center gap-1 cursor-pointer shadow-sm"
-            title="Restart the 3 parallel subagents"
+            title="Restart parallel subagents"
           >
             <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
             <span>{t.dispatchFleet}</span>
@@ -163,7 +239,7 @@ export const InteractiveCliBar: React.FC<InteractiveCliBarProps> = ({
       </div>
 
       {/* Interactive Command Line Prompt Form */}
-      <form onSubmit={handleSubmit} className="flex items-center gap-2 bg-[#040508] p-2 rounded border border-slate-800">
+      <form onSubmit={handleSubmit} className="flex items-center gap-2 bg-[#040508] p-2 rounded border border-slate-800 focus-within:border-teal-500/80 transition">
         <span className="text-teal-400 select-none flex items-center gap-1 text-xs font-bold whitespace-nowrap">
           <Terminal className="w-3.5 h-3.5 text-teal-400 shrink-0" />
           <span>{cliPrompt}</span>
@@ -175,17 +251,17 @@ export const InteractiveCliBar: React.FC<InteractiveCliBarProps> = ({
           onChange={(e) => setCommandInput(e.target.value)}
           placeholder={
             isZh
-              ? "输入命令: 'approve', 'rollback', 'inject bash', 'session 2', 'mode codex', 'alert'..."
-              : "type 'approve', 'rollback', 'inject bash', 'session 2', 'mode codex', 'alert'..."
+              ? "执行真实 Bash/Git 指令 (如 'git status', 'ls -la', 'git diff', 'npm test') 或控制指令 'approve', 'rollback'..."
+              : "Run real terminal command ('git status', 'ls', 'git diff') or 'approve', 'rollback', 'inject bash'..."
           }
           className="flex-1 bg-transparent border-none outline-none text-slate-200 placeholder:text-slate-600 text-xs font-mono"
         />
 
         <button
           type="submit"
-          className="px-2.5 py-1 rounded bg-slate-800 hover:bg-teal-900 text-slate-300 hover:text-teal-200 transition text-[10px] flex items-center gap-1 cursor-pointer font-bold"
+          className="px-3 py-1 rounded bg-slate-800 hover:bg-teal-900 text-slate-300 hover:text-teal-200 transition text-[10px] flex items-center gap-1 cursor-pointer font-bold border border-slate-700"
         >
-          <Send className="w-3 h-3" />
+          <Send className="w-3 h-3 text-teal-400" />
           <span>{t.btnRun}</span>
         </button>
       </form>

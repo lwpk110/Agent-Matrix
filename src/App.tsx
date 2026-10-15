@@ -14,6 +14,7 @@ import {
   WsConnectionState,
   TelemetryMode,
   HitlApprovalRequest,
+  RealSystemStatus,
 } from './types/matrix';
 import { Language, translations } from './i18n/translations';
 import { TerminalHeader } from './components/TerminalHeader';
@@ -34,20 +35,105 @@ import { soundFx } from './utils/audio';
 export default function App() {
   const [language, setLanguage] = useState<Language>('zh');
   const [mode, setMode] = useState<MatrixMode>('claude');
-  const [telemetryMode, setTelemetryMode] = useState<TelemetryMode>('simulation');
-  const [wsState, setWsState] = useState<WsConnectionState>('simulation');
+  const [telemetryMode, setTelemetryMode] = useState<TelemetryMode>('gateway');
+  const [wsState, setWsState] = useState<WsConnectionState>('probing');
   const [isStreaming, setIsStreaming] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [isTuiModalOpen, setIsTuiModalOpen] = useState(false);
   const [isLocalAgentModalOpen, setIsLocalAgentModalOpen] = useState(false);
 
-  // Multi-Session Fleet Workspaces
+  // Real System & Git status telemetry
+  const [realStatus, setRealStatus] = useState<RealSystemStatus | null>(null);
+  const [hasClaudeHooks, setHasClaudeHooks] = useState<boolean>(false);
+
+  // Multi-Session Fleet Workspaces (Primary is Real Workspace, followed by 3 simulation scenarios)
   const [sessions, setSessions] = useState<SessionWorkspace[]>([
+    {
+      id: 'sess-real',
+      tag: '#⚡ local-active-agent',
+      title: '本地真实工作区 (Real Local Workspace)',
+      branch: 'main',
+      activeFile: 'server.ts',
+      step: 1,
+      totalSteps: 5,
+      isRealWorkspace: true,
+      directive:
+        '已挂载当前项目真实工作区，正在监听 7788 网关接收 Claude Code 与 Codex 实时指令流与安全拦截。',
+      activeDiff: {
+        filePath: 'server.ts',
+        oldCode: '// 等待真实 Agent 或 Git 修改...',
+        newCode: '// 7788 本地遥测与安全网关已启动就绪 (Port 3000 & 7788)',
+      },
+      finOps: {
+        burnRatePerMin: 0.05,
+        burnTrend: [0.02, 0.03, 0.05],
+        tokensUsed: 12400,
+        maxTokens: 200000,
+        watermarkPct: 6.2,
+        cyclomaticComplexityDelta: 0,
+        loopCircuitBreakerCount: 0,
+        totalSessionCost: 0.032,
+      },
+      jev: {
+        pInline: 0.22,
+        pSubagents: 0.74,
+        pEscalate: 0.04,
+        entropy: 0.41,
+        confidence: 0.95,
+        monteCarloSamples: 5000,
+        decisionRule: 'ARGMAX[ JEV ] => DELEGATE_TRIPLE_SUBAGENTS',
+      },
+      subagents: [
+        {
+          id: 'sub-real-01',
+          name: 'Worker #01',
+          model: 'Claude 3.5 Haiku',
+          type: 'worker',
+          badge: '[Local-AST]',
+          status: 'streaming',
+          progress: 92,
+          currentPayload: 'Local workspace Git & AST integrity check active',
+          itemsProcessed: 18,
+          totalItems: 18,
+          frequencyHz: 140.0,
+          sparkline: [40, 60, 75, 88, 92],
+        },
+        {
+          id: 'sub-real-02',
+          name: 'Explorer #02',
+          model: 'Claude 3.5 Haiku',
+          type: 'explorer',
+          badge: '[Hook-7788]',
+          status: 'running',
+          progress: 75,
+          currentPayload: 'Listening on http://127.0.0.1:7788/hook/pre for PreToolUse interception',
+          itemsProcessed: 8,
+          totalItems: 10,
+          frequencyHz: 110.0,
+          sparkline: [30, 45, 55, 65, 75],
+        },
+        {
+          id: 'sub-real-03',
+          name: 'Researcher #03',
+          model: 'Claude 3.5 Haiku',
+          type: 'researcher',
+          badge: '[Sys-Monitor]',
+          status: 'complete',
+          progress: 100,
+          currentPayload: 'Local Node.js & Git telemetry heartbeat sync normal',
+          itemsProcessed: 24,
+          totalItems: 24,
+          frequencyHz: 160.0,
+          sparkline: [50, 70, 85, 100, 100],
+        },
+      ],
+      isBlocked: false,
+    },
     {
       id: 'sess-1',
       tag: '#1 auth-oauth-refactor',
-      title: 'OAuth2 零信任安全重构',
+      title: 'OAuth2 零信任安全重构 [仿真]',
       branch: 'feat/neural-auth',
       activeFile: 'src/auth/oauth2.ts',
       step: 4,
@@ -127,7 +213,7 @@ export default function App() {
     {
       id: 'sess-2',
       tag: '#2 k8s-cnpg-scaling',
-      title: 'CloudNative-PG 伸缩与调度',
+      title: 'CloudNative-PG 伸缩与调度 [仿真]',
       branch: 'ops/cnpg-ha-prod',
       activeFile: 'k8s/prod-secrets.yaml',
       step: 2,
@@ -207,7 +293,7 @@ export default function App() {
     {
       id: 'sess-3',
       tag: '#3 doris-sql-opt',
-      title: 'Doris 分布式物化视图调优',
+      title: 'Doris 分布式物化视图调优 [仿真]',
       branch: 'perf/doris-mview',
       activeFile: 'sql/views/mview_orders_daily.sql',
       step: 5,
@@ -286,15 +372,15 @@ export default function App() {
     },
   ]);
 
-  const [activeSessionId, setActiveSessionId] = useState('sess-1');
+  const [activeSessionId, setActiveSessionId] = useState('sess-real');
   const activeSession = sessions.find((s) => s.id === activeSessionId) || sessions[0];
 
   // Advisor State
   const [advisor, setAdvisor] = useState<AdvisorState>({
     model: 'Claude 3.7 Opus',
     status: 'standby',
-    riskScore: 0.8,
-    riskCeiling: 2.0, // Strict 2.0% ceiling per prompt
+    riskScore: 0.4,
+    riskCeiling: 2.0, // Strict 2.0% ceiling
     alertActive: false,
     alertReason: '',
     checks: [
@@ -309,36 +395,19 @@ export default function App() {
   const [logs, setLogs] = useState<LogEntry[]>([
     {
       id: 'log-01',
-      timestamp: '23:45:01',
-      agentTag: 'SYSTEM',
-      agentColor: 'cyan',
+      timestamp: new Date().toTimeString().split(' ')[0],
+      agentTag: 'GATEWAY',
+      agentColor: 'emerald',
       category: 'system',
-      message: 'AI 智能体控制平面与安全审计网关已初始化 (Control Plane v2.4)',
+      message: 'AI 智能体控制平面与安全审计网关已启动 (Embedded Gateway Ports: 3000 & 7788)',
     },
     {
       id: 'log-02',
-      timestamp: '23:45:04',
-      agentTag: 'GATEKEEPER',
-      agentColor: 'purple',
-      category: 'hitl',
-      message: 'HITL 熔断规则已激活: 监控 auth.ts / prod-secrets.yaml / Risk > 2.0%',
-    },
-    {
-      id: 'log-03',
-      timestamp: '23:45:08',
-      agentTag: 'SONNET',
-      agentColor: 'amber',
-      category: 'system',
-      message: '已挂载并发工作区 #1 auth-oauth-refactor (PID: 88412, Context: 182.4k)',
-    },
-    {
-      id: 'log-04',
-      timestamp: '23:45:12',
-      agentTag: 'JEV-ROUTER',
+      timestamp: new Date().toTimeString().split(' ')[0],
+      agentTag: 'LOCAL-ENV',
       agentColor: 'cyan',
-      category: 'router',
-      message: 'JEV 分叉裁决: 并行子智能体集群调度 (P=0.82) 胜出',
-      probabilities: { pInline: 0.14, pSubagents: 0.82, pEscalate: 0.04 },
+      category: 'system',
+      message: '已挂载本地工程目录，双模总线支持真实 Agent 钩子拦截与实时演练切换。',
     },
   ]);
 
@@ -350,13 +419,60 @@ export default function App() {
       id: 'log-' + Math.random().toString(36).substr(2, 9),
       timestamp: timeStr,
     };
-    setLogs((prev) => [...prev.slice(-50), newEntry]);
+    setLogs((prev) => [...prev.slice(-60), newEntry]);
     if (entry.riskLevel === 'critical' || entry.category === 'hitl') {
       soundFx.playAlert();
     } else {
       soundFx.playChirp(entry.agentColor === 'amber' ? 920 : 740);
     }
   }, []);
+
+  // Update real session workspace from system status
+  const updateRealSessionFromStatus = useCallback((status: RealSystemStatus) => {
+    setSessions((prev) =>
+      prev.map((s) => {
+        if (s.id === 'sess-real') {
+          const firstModFile = status.modifiedFiles && status.modifiedFiles.length > 0 ? status.modifiedFiles[0] : 'server.ts';
+          return {
+            ...s,
+            branch: status.gitBranch || s.branch,
+            activeFile: firstModFile,
+            realCwd: status.cwd,
+            realCommit: status.gitRecentCommit,
+            realModifiedFiles: status.modifiedFiles || [],
+            directive: status.hasClaudeHooks
+              ? `已挂载本地项目: ${status.cwd} (Git: ${status.gitBranch})，.claude/settings.json 拦截钩子处于激活状态。`
+              : `已挂载本地项目: ${status.cwd} (Git: ${status.gitBranch})，点击下方【⚡ 注入 Claude 钩子】即可启用本地命令拦截。`,
+            activeDiff: status.gitDiff
+              ? {
+                  filePath: firstModFile,
+                  oldCode: '// Git 工作区基准代码',
+                  newCode: status.gitDiff.slice(0, 1200),
+                }
+              : s.activeDiff,
+          };
+        }
+        return s;
+      })
+    );
+  }, []);
+
+  // Initial fetch of real local status
+  useEffect(() => {
+    telemetryBus.fetchRealStatus().then((status) => {
+      if (status) {
+        setRealStatus(status);
+        setHasClaudeHooks(Boolean(status.hasClaudeHooks));
+        updateRealSessionFromStatus(status);
+        addLog({
+          agentTag: 'LOCAL-GIT',
+          agentColor: 'cyan',
+          category: 'system',
+          message: `检测到本地 Git 分支: [${status.gitBranch}]，最新提交: ${status.gitRecentCommit}，未提交文件: ${status.modifiedFiles.length} 个`,
+        });
+      }
+    });
+  }, [updateRealSessionFromStatus, addLog]);
 
   // Sync Audio Mute
   useEffect(() => {
@@ -379,7 +495,33 @@ export default function App() {
     });
 
     const unsubEvents = telemetryBus.subscribe((event) => {
-      if (event.type === 'hitl_blocked') {
+      if (event.type === 'system_status') {
+        const status = event.payload as RealSystemStatus;
+        setRealStatus(status);
+        setHasClaudeHooks(Boolean(status.hasClaudeHooks));
+        updateRealSessionFromStatus(status);
+      } else if (event.type === 'exec_result') {
+        const payload = event.payload as {
+          command: string;
+          output: string;
+          exitCode: number;
+          durationMs: number;
+        };
+        addLog({
+          agentTag: 'LOCAL-CLI',
+          agentColor: payload.exitCode === 0 ? 'emerald' : 'rose',
+          category: 'system',
+          message: `$ ${payload.command} (${payload.durationMs}ms, exit: ${payload.exitCode})\n${payload.output}`,
+        });
+      } else if (event.type === 'claude_hooks_configured') {
+        setHasClaudeHooks(true);
+        addLog({
+          agentTag: 'GATEWAY',
+          agentColor: 'emerald',
+          category: 'system',
+          message: '本地 .claude/settings.json 钩子已成功注入，Claude Code 工具调用将自动重定向至本控制平面！',
+        });
+      } else if (event.type === 'hitl_blocked') {
         const payload = event.payload as {
           id: string;
           targetPath: string;
@@ -396,19 +538,44 @@ export default function App() {
           payload.diffSnippet
         );
       } else if (event.type === 'tool_call') {
-        const p = event.payload as { name: string; args: string };
+        const p = event.payload as {
+          name: string;
+          args: string;
+          diffSnippet?: { filePath: string; oldCode: string; newCode: string };
+        };
         addLog({
           agentTag: mode === 'codex' ? 'CODEX-CLI' : 'CLAUDE-CODE',
           agentColor: 'amber',
           category: 'tool',
-          message: `[网关实时工具调用] ${p.name}`,
+          message: `[网关实时工具调用] ${p.name} ${p.args ? `(${p.args.slice(0, 80)})` : ''}`,
           toolCall: {
             name: p.name,
             args: p.args,
             status: 'completed',
             durationMs: 45,
           },
+          diffSnippet: p.diffSnippet,
         });
+
+        // Update real session if diff provided
+        if (p.diffSnippet) {
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === 'sess-real'
+                ? {
+                    ...s,
+                    activeFile: p.diffSnippet!.filePath,
+                    activeDiff: p.diffSnippet!,
+                    finOps: {
+                      ...s.finOps,
+                      tokensUsed: s.finOps.tokensUsed + 1200,
+                      watermarkPct: +(((s.finOps.tokensUsed + 1200) / s.finOps.maxTokens) * 100).toFixed(1),
+                    },
+                  }
+                : s
+            )
+          );
+        }
       }
     });
 
@@ -416,7 +583,7 @@ export default function App() {
       unsubState();
       unsubEvents();
     };
-  }, [mode, addLog]);
+  }, [mode, addLog, updateRealSessionFromStatus]);
 
   // Toggle Telemetry Mode (Gateway vs Simulation)
   const handleToggleTelemetryMode = () => {
@@ -536,7 +703,7 @@ export default function App() {
       agentTag: 'SUPERVISOR',
       agentColor: 'emerald',
       category: 'hitl',
-      message: `人工审批通过: REQ-${reqId} 已放行。执行流已恢复，下游子智能体继续执行。`,
+      message: `人工审批通过: REQ-${reqId} 已放行。执行流已恢复，下游工具与子智能体继续执行。`,
     });
   };
 
@@ -563,7 +730,7 @@ export default function App() {
       agentTag: 'SUPERVISOR',
       agentColor: 'purple',
       category: 'hitl',
-      message: `人工拒绝并回滚: REQ-${reqId} 补丁已作废，代码已安全回退至上一个干净 AST 快照。`,
+      message: `人工拒绝并回滚: REQ-${reqId} 补丁已作废，操作已被网关安全终止。`,
     });
   };
 
@@ -599,7 +766,7 @@ export default function App() {
       agentTag: 'SUPERVISOR',
       agentColor: 'cyan',
       category: 'hitl',
-      message: `已向 Agent 注入修订约束指令: "${promptText}"，触发重新推理。`,
+      message: `已向 Agent 注入修订约束指令: "${promptText}"，触发安全重新推理。`,
     });
   };
 
@@ -627,6 +794,49 @@ export default function App() {
     }
   };
 
+  // One-click Setup Claude Hooks
+  const handleInjectClaudeHooks = async () => {
+    soundFx.playKeyClick();
+    try {
+      const res = await telemetryBus.setupClaudeHooks();
+      setHasClaudeHooks(true);
+      addLog({
+        agentTag: 'GATEWAY',
+        agentColor: 'emerald',
+        category: 'system',
+        message: `成功注入 Claude Code 配置文件: ${res.settingsPath}！现在在终端运行 claude 即可直接拦截。`,
+      });
+    } catch (err: any) {
+      addLog({
+        agentTag: 'GATEWAY',
+        agentColor: 'rose',
+        category: 'alert',
+        message: `注入配置失败: ${err.message}`,
+      });
+    }
+  };
+
+  // One-click Test Real Hook
+  const handleTriggerRealTest = async (risk: 'high' | 'normal') => {
+    soundFx.playChirp(880);
+    try {
+      addLog({
+        agentTag: 'TEST-BUS',
+        agentColor: 'cyan',
+        category: 'system',
+        message: `正在向 /hook/pre 发送真实 ${risk === 'high' ? '高危修改 (auth.ts)' : '常规命令 (git status)'} 测试调用...`,
+      });
+      await telemetryBus.triggerRealTest(risk);
+    } catch (err: any) {
+      addLog({
+        agentTag: 'TEST-BUS',
+        agentColor: 'rose',
+        category: 'alert',
+        message: `测试调用失败: ${err.message}`,
+      });
+    }
+  };
+
   // Session Switching
   const handleSelectSession = (id: string) => {
     soundFx.playKeyClick();
@@ -646,7 +856,7 @@ export default function App() {
           ...prev,
           status: 'standby',
           alertActive: false,
-          riskScore: 0.8,
+          riskScore: target.isRealWorkspace ? 0.4 : 0.8,
           pendingHitl: undefined,
         }));
       }
@@ -796,79 +1006,116 @@ export default function App() {
     });
   };
 
-  // Custom CLI command parser
-  const handleExecuteCli = (rawCmd: string) => {
-    const cmd = rawCmd.toLowerCase();
+  // Custom CLI command parser (Handles internal control + executes REAL shell commands on host)
+  const handleExecuteCli = async (rawCmd: string) => {
+    const cmd = rawCmd.trim();
+    const lower = cmd.toLowerCase();
     soundFx.playKeyClick();
 
-    if (cmd === 'help') {
+    if (lower === 'help') {
       addLog({
         agentTag: 'CLI',
         agentColor: 'cyan',
         category: 'system',
         message:
-          '控制平面指令: approve, rollback, inject [bash|edit|grep|ast], prompt <text>, session [1|2|3], alert, mode [claude|codex|hybrid], clear, tui',
+          '控制平面指令:\n• 控制指令: approve, rollback, session [real|1|2|3], alert, clear, tui\n• 真实终端: git status, git diff, git branch, ls -la, pwd, npm test (直接在本地工作区执行)',
       });
-    } else if (cmd === 'approve') {
+      return;
+    } else if (lower === 'approve') {
       if (activeSession.pendingHitl) {
         handleApproveHitl(activeSession.pendingHitl.id);
       } else {
         addLog({ agentTag: 'CLI', agentColor: 'amber', category: 'system', message: '当前会话未处于等待审批状态。' });
       }
-    } else if (cmd === 'rollback') {
+      return;
+    } else if (lower === 'rollback') {
       if (activeSession.pendingHitl) {
         handleRollbackHitl(activeSession.pendingHitl.id);
       } else {
         addLog({ agentTag: 'CLI', agentColor: 'amber', category: 'system', message: '当前会话未处于等待审批状态。' });
       }
-    } else if (cmd.startsWith('session')) {
-      if (cmd.includes('2')) handleSelectSession('sess-2');
-      else if (cmd.includes('3')) handleSelectSession('sess-3');
+      return;
+    } else if (lower.startsWith('session')) {
+      if (lower.includes('real')) handleSelectSession('sess-real');
+      else if (lower.includes('2')) handleSelectSession('sess-2');
+      else if (lower.includes('3')) handleSelectSession('sess-3');
       else handleSelectSession('sess-1');
-    } else if (cmd.startsWith('prompt')) {
-      const injected = rawCmd.replace(/^prompt\s*/i, '');
+      return;
+    } else if (lower.startsWith('prompt')) {
+      const injected = cmd.replace(/^prompt\s*/i, '');
       if (activeSession.pendingHitl) {
         handleInjectPromptHitl(activeSession.pendingHitl.id, injected);
       } else {
         addLog({ agentTag: 'CLI', agentColor: 'cyan', category: 'system', message: `已注入提示词: ${injected}` });
       }
-    } else if (cmd.startsWith('inject')) {
-      if (cmd.includes('edit')) injectToolCall('file_edit');
-      else if (cmd.includes('grep')) injectToolCall('grep');
-      else if (cmd.includes('ast')) injectToolCall('ast');
+      return;
+    } else if (lower.startsWith('inject')) {
+      if (lower.includes('edit')) injectToolCall('file_edit');
+      else if (lower.includes('grep')) injectToolCall('grep');
+      else if (lower.includes('ast')) injectToolCall('ast');
       else injectToolCall('bash');
-    } else if (cmd === 'alert' || cmd.includes('risk') || cmd.includes('告警')) {
+      return;
+    } else if (lower === 'alert' || lower.includes('risk') || lower.includes('告警')) {
       handleTriggerHighRiskTest('auth');
-    } else if (cmd.includes('mode codex')) {
+      return;
+    } else if (lower.includes('mode codex')) {
       setMode('codex');
-    } else if (cmd.includes('mode claude')) {
+      return;
+    } else if (lower.includes('mode claude')) {
       setMode('claude');
-    } else if (cmd.includes('mode hybrid')) {
+      return;
+    } else if (lower.includes('mode hybrid')) {
       setMode('hybrid');
-    } else if (cmd.includes('clear')) {
+      return;
+    } else if (lower.includes('clear')) {
       setLogs([]);
-    } else if (cmd.includes('tui')) {
+      return;
+    } else if (lower.includes('tui')) {
       setIsTuiModalOpen(true);
-    } else {
+      return;
+    }
+
+    // Default: Execute real shell command via backend API
+    addLog({
+      agentTag: 'LOCAL-CLI',
+      agentColor: 'amber',
+      category: 'system',
+      message: `正在执行真实命令: $ ${cmd} ...`,
+    });
+
+    try {
+      const result = await telemetryBus.executeCommand(cmd);
       addLog({
-        agentTag: 'CLI',
-        agentColor: 'amber',
+        agentTag: 'LOCAL-CLI',
+        agentColor: result.exitCode === 0 ? 'emerald' : 'rose',
         category: 'system',
-        message: `Executed shell command: "${rawCmd}" -> Exit code 0`,
+        message: result.output || `(Exit code: ${result.exitCode})`,
+      });
+
+      // If git command modified files, refresh status
+      if (cmd.startsWith('git')) {
+        telemetryBus.fetchRealStatus().then((st) => st && updateRealSessionFromStatus(st));
+      }
+    } catch (err: any) {
+      addLog({
+        agentTag: 'LOCAL-CLI',
+        agentColor: 'rose',
+        category: 'alert',
+        message: `命令执行失败: ${err.message}`,
       });
     }
   };
 
-  // Background Simulation Tick
+  // Background Simulation Tick (Only runs for simulation scenarios, NOT sess-real)
   useEffect(() => {
-    if (!isStreaming || activeSession.isBlocked) return;
-    const intervalTime = Math.max(1800 / speed, 500);
+    if (!isStreaming || activeSession.isBlocked || activeSession.isRealWorkspace) return;
+    const intervalTime = Math.max(2200 / speed, 600);
 
     const timer = setInterval(() => {
       // Advance active subagent progress
       setSessions((prev) =>
         prev.map((s) => {
-          if (s.id === activeSessionId && !s.isBlocked) {
+          if (s.id === activeSessionId && !s.isBlocked && !s.isRealWorkspace) {
             return {
               ...s,
               subagents: s.subagents.map((agent) => {
@@ -885,8 +1132,8 @@ export default function App() {
         })
       );
 
-      // Random telemetry event
-      if (Math.random() > 0.7) {
+      // Random telemetry event for simulation
+      if (Math.random() > 0.75) {
         const events = [
           {
             agentTag: 'HAIKU-01',
@@ -913,7 +1160,7 @@ export default function App() {
     }, intervalTime);
 
     return () => clearInterval(timer);
-  }, [isStreaming, speed, activeSession.isBlocked, activeSessionId, mode, addLog, activeSession.activeFile]);
+  }, [isStreaming, speed, activeSession.isBlocked, activeSession.isRealWorkspace, activeSessionId, mode, addLog, activeSession.activeFile]);
 
   return (
     <div className="min-h-screen bg-[#06070a] text-slate-200 flex flex-col font-mono selection:bg-purple-900/60 selection:text-purple-200">
@@ -945,7 +1192,7 @@ export default function App() {
 
       {/* Main Container */}
       <main className="relative flex-1 p-3 lg:p-4 max-w-[1600px] w-full mx-auto flex flex-col gap-3">
-        {/* Multi-Session Fleet Tabs */}
+        {/* Multi-Session Fleet Tabs (Real Workspace First, then 3 Simulation Scenarios) */}
         <SessionTabBar
           sessions={sessions}
           activeSessionId={activeSessionId}
@@ -984,7 +1231,7 @@ export default function App() {
 
             {/* Right 8 Cols: Main Session, JEV Router, Haiku Subagents */}
             <div className="lg:col-span-8 flex flex-col gap-3">
-              {/* Amber Dashed Main Session Controller */}
+              {/* Amber/Emerald Dashed Main Session Controller (Bound to Real Git & CWD) */}
               <MainSessionPanel
                 mode={mode}
                 language={language}
@@ -998,6 +1245,11 @@ export default function App() {
                 branch={activeSession.branch}
                 sessionTag={activeSession.tag}
                 isBlocked={activeSession.isBlocked}
+                isRealWorkspace={activeSession.isRealWorkspace}
+                realCwd={realStatus?.cwd}
+                realCommit={realStatus?.gitRecentCommit}
+                realModifiedFiles={realStatus?.modifiedFiles}
+                hasClaudeHooks={hasClaudeHooks}
               />
 
               {/* Cyan Dashed JEV Fork Probability Router */}
@@ -1043,6 +1295,7 @@ export default function App() {
             mode={mode}
             language={language}
             isBlocked={activeSession.isBlocked}
+            hasClaudeHooks={hasClaudeHooks}
             onApproveHitl={() => activeSession.pendingHitl && handleApproveHitl(activeSession.pendingHitl.id)}
             onRollbackHitl={() => activeSession.pendingHitl && handleRollbackHitl(activeSession.pendingHitl.id)}
             onToggleMode={() => setMode((m) => (m === 'claude' ? 'codex' : 'claude'))}
@@ -1052,6 +1305,8 @@ export default function App() {
             onClearLogs={() => setLogs([])}
             onOpenTuiModal={() => setIsTuiModalOpen(true)}
             onExecuteCustomCommand={handleExecuteCli}
+            onInjectClaudeHooks={handleInjectClaudeHooks}
+            onTriggerRealTest={handleTriggerRealTest}
           />
         </div>
 
