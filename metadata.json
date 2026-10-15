@@ -1,0 +1,6 @@
+{
+  "name": "AGENT MATRIX · NEURAL TREE",
+  "description": "Pitch-black cyberpunk terminal HUD monitoring Claude Code and OpenAI Codex multi-agent neural tree workflows with real-time telemetry, live diffs, and Python TUI script.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

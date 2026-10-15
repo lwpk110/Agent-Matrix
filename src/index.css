@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-terminal: #06070a;
+    --neon-purple: #a855f7;
+    --neon-amber: #fb923c;
+    --neon-cyan: #2dd4bf;
+    --neon-emerald: #10b981;
+    --neon-rose: #f43f5e;
+  }
+
+  body {
+    background-color: var(--bg-terminal);
+    font-family: 'JetBrains Mono', 'Share Tech Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    color: #e2e8f0;
+    overflow-x: hidden;
+  }
+}
+
+/* Cyberpunk terminal glow & border utilities */
+.border-neon-purple {
+  border-color: #a855f7;
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.18), inset 0 0 12px rgba(168, 85, 247, 0.05);
+}
+
+.border-neon-amber {
+  border-color: #fb923c;
+  box-shadow: 0 0 12px rgba(251, 146, 60, 0.18), inset 0 0 12px rgba(251, 146, 60, 0.05);
+}
+
+.border-neon-cyan {
+  border-color: #2dd4bf;
+  box-shadow: 0 0 12px rgba(45, 212, 191, 0.18), inset 0 0 12px rgba(45, 212, 191, 0.05);
+}
+
+.border-neon-emerald {
+  border-color: #10b981;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.18), inset 0 0 12px rgba(16, 185, 129, 0.05);
+}
+
+.border-neon-rose {
+  border-color: #f43f5e;
+  box-shadow: 0 0 18px rgba(244, 63, 94, 0.35), inset 0 0 14px rgba(244, 63, 94, 0.15);
+}
+
+/* Subtle CRT scanline texture */
+.crt-grid {
+  background-size: 100% 4px, 4px 100%;
+  background-image: 
+    linear-gradient(rgba(18, 24, 38, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(18, 24, 38, 0.15) 1px, transparent 1px);
+}
+
+/* Custom terminal scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090b10;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e2638;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2dd4bf;
+}
+
+/* Pulsing text glow */
+@keyframes text-glow {
+  0%, 100% {
+    text-shadow: 0 0 4px rgba(45, 212, 191, 0.4);
+  }
+  50% {
+    text-shadow: 0 0 12px rgba(45, 212, 191, 0.8), 0 0 20px rgba(45, 212, 191, 0.4);
+  }
+}
+
+.animate-text-glow {
+  animation: text-glow 2.5s infinite ease-in-out;
+}
+
+@keyframes laser-flow {
+  0% {
+    stroke-dashoffset: 100;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+.animate-laser {
+  animation: laser-flow 1.8s linear infinite;
+}

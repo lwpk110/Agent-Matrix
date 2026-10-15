@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for replacing external Python dependencies with a native VS Code / Cursor IDE extension with auto-start and an embedded Node.js/TypeScript gateway running with zero extra processes.",
+  "updatedAt": "2026-10-15T07:12:11.859795765Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

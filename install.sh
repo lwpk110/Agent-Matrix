@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# AGENT MATRIX · 一键安装与配置脚本 (One-Click Setup Script)
+# 支持 Linux / macOS / WSL
+# ==============================================================================
+
+set -e
+
+echo -e "\033[1;36m"
+cat << "EOF"
+   ___   _____  _______  ________   __  ______ _____ ___  _______  __
+  / _ | / ___/ / __/ _ \/_  __/ /  /  |/  / _ /_  __/ _ \/  _/ _ \/_/
+ / __ |/ (_ / / _// // / / / / /__/ /|_/ / __ |/ / / , _// // // /__ 
+/_/ |_|\___/ /___/____/ /_/ /____/_/  /_/_/ |_/_/ /_/|_/___/____/_/ 
+EOF
+echo -e "\033[0m"
+echo -e "\033[1;33m>>> 正在安装 AGENT MATRIX · 生产级智能体控制平面与安全网关...\033[0m"
+
+# 1. 检查 Node.js 环境
+if ! command -v node &> /dev/null; then
+    echo -e "\033[1;31m[错误]\033[0m 未检测到 Node.js，请先安装 Node.js (推荐 v18+ 或 v20+): https://nodejs.org/"
+    exit 1
+fi
+
+echo -e "\033[1;32m[✓]\033[0m 检测到 Node.js 版本: $(node -v)"
+
+# 2. 安装项目主依赖
+echo -e "\n\033[1;34m[1/3] 正在安装 Web 控制平面与内嵌网关依赖 (npm install)...\033[0m"
+npm install
+
+# 3. 自动注入 Claude Code 生产级钩子配置
+echo -e "\n\033[1;34m[2/3] 正在配置 Claude Code 安全审计钩子 (.claude/settings.json)...\033[0m"
+mkdir -p .claude
+cat << 'EOF' > .claude/settings.json
+{
+  "hooks": {
+    "PreToolUse": "curl -s -X POST http://localhost:7788/hook/pre -H 'Content-Type: application/json' -d @-",
+    "PostToolUse": "curl -s -X POST http://localhost:7788/hook/post -H 'Content-Type: application/json' -d @-"
+  },
+  "security": {
+    "gatekeeperEnabled": true,
+    "gatekeeperPort": 7788
+  }
+}
+EOF
+echo -e "\033[1;32m[✓]\033[0m .claude/settings.json 配置已成功就绪！"
+
+# 4. 赋予脚本执行权限
+chmod +x codex-wrapper.sh 2>/dev/null || true
+
+echo -e "\n\033[1;32m====================================================================\033[0m"
+echo -e "\033[1;32m🎉 AGENT MATRIX 安装已全部就绪！(Zero-Python 零外部依赖)\033[0m"
+echo -e "\033[1;32m====================================================================\033[0m"
+echo -e ""
+echo -e "👉 \033[1;37m启动控制看板与安全网关：\033[0m"
+echo -e "   \033[1;36mnpm run dev\033[0m"
+echo -e ""
+echo -e "👉 \033[1;37m浏览器访问：\033[0m"
+echo -e "   \033[1;35mhttp://localhost:3000\033[0m"
+echo -e ""
+echo -e "👉 \033[1;37m在 VS Code / Cursor 中作为原生插件运行：\033[0m"
+echo -e "   cd vscode-extension && npm install，按 F5 启动即可！"
+echo -e ""

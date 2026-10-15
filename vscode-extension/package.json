@@ -1,0 +1,72 @@
+{
+  "name": "agent-matrix-control-plane",
+  "displayName": "Agent Matrix · AI Agent Control Plane & Security Gateway",
+  "description": "Native VS Code & Cursor extension that embeds an automatic AI Agent security audit gateway for Claude Code and OpenAI Codex. Zero Python dependencies.",
+  "version": "2.4.0",
+  "publisher": "agent-matrix",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Debuggers",
+    "Linters",
+    "Security"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "codex",
+    "agent",
+    "security-gateway",
+    "hitl",
+    "control-plane"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "workspaceContains:.claude",
+    "onCommand:agentMatrix.openDashboard"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentMatrix.openDashboard",
+        "title": "Open Agent Matrix Control Plane (Webview)",
+        "category": "Agent Matrix"
+      },
+      {
+        "command": "agentMatrix.approveCurrent",
+        "title": "HITL: Approve Current Blocked Tool Call",
+        "category": "Agent Matrix"
+      },
+      {
+        "command": "agentMatrix.rollbackCurrent",
+        "title": "HITL: Rollback Current Mutation",
+        "category": "Agent Matrix"
+      },
+      {
+        "command": "agentMatrix.setupClaudeHooks",
+        "title": "Auto-Configure .claude/settings.json in Workspace",
+        "category": "Agent Matrix"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "agentMatrix.openDashboard",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m"
+      },
+      {
+        "command": "agentMatrix.approveCurrent",
+        "key": "ctrl+alt+y",
+        "mac": "cmd+alt+y"
+      },
+      {
+        "command": "agentMatrix.rollbackCurrent",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n"
+      }
+    ]
+  }
+}
