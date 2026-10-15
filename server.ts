@@ -152,6 +152,9 @@ async function start() {
     gatewayServer.listen(7788, '127.0.0.1', () => {
       console.log(`⚡ Embedded Agent Security Gateway listening on http://127.0.0.1:7788`);
     });
+    gatewayWss.on('error', () => {
+      // Ignore if port 7788 is already bound
+    });
     gatewayServer.on('error', () => {
       // If 7788 is already bound (e.g. by VS Code extension), ignore
     });

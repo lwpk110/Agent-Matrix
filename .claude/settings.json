@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": "curl -s -X POST http://localhost:7788/hook/pre -H 'Content-Type: application/json' -d @-",
+    "PostToolUse": "curl -s -X POST http://localhost:7788/hook/post -H 'Content-Type: application/json' -d @-"
+  },
+  "security": {
+    "gatekeeperEnabled": true,
+    "gatekeeperPort": 7788
+  }
+}
