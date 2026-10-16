@@ -124,6 +124,49 @@ export interface Translations {
   btnDownload: string;
   modalRunLocally: string;
   modalDesc: string;
+
+  // Agent Black Box Deconstruction HUD
+  blackBox: {
+    title: string;
+    subtitle: string;
+    tabPipeline: string;
+    tabPrompts: string;
+    tabMcpHooks: string;
+    tabPermissions: string;
+    btnRunFullTrace: string;
+    btnTriggerMcpHook: string;
+    btnSimulateDenial: string;
+    btnInjectDirective: string;
+    stagePrompt: string;
+    stageLlm: string;
+    stageMcpHook: string;
+    stagePermission: string;
+    stageSandbox: string;
+    stageFeedback: string;
+    promptAnatomy: string;
+    systemPrompt: string;
+    mcpToolDefs: string;
+    dynamicContext: string;
+    injectedDirectives: string;
+    mcpRegistry: string;
+    hookTimeline: string;
+    zeroTrustSandbox: string;
+    securityFirewall: string;
+    tokenBurnBreakdown: string;
+    livePacketStream: string;
+    tabCallChain: string;
+    stepNumber: string;
+    callerCallee: string;
+    autoFlow: string;
+    stepThrough: string;
+    resetChain: string;
+    flowRate: string;
+    scenarioSelector: string;
+    scenarioStandard: string;
+    scenarioBlocked: string;
+    scenarioMultiMcp: string;
+    dataPayloads: string;
+  };
 }
 
 export const translations: Record<Language, Translations> = {
@@ -257,6 +300,49 @@ export const translations: Record<Language, Translations> = {
     btnDownload: 'Download .py',
     modalRunLocally: 'Run locally:',
     modalDesc: 'Pure Linux terminal Textual TUI',
+
+    // Agent Black Box Deconstruction HUD
+    blackBox: {
+      title: 'AGENT BLACK BOX OBSERVABILITY MATRIX',
+      subtitle: 'PROMPTS • MCP HOOKS • PERMISSIONS • DYNAMIC TRACE',
+      tabPipeline: '⚡ Dynamic Pipeline Topology',
+      tabPrompts: '🔮 Live Prompt Decomposition',
+      tabMcpHooks: '🪝 MCP Hook Interception Stream',
+      tabPermissions: '🛡️ Zero-Trust Permission Firewall',
+      btnRunFullTrace: 'Run Full Black Box Trace',
+      btnTriggerMcpHook: 'Trigger MCP PreTool Hook',
+      btnSimulateDenial: 'Simulate Permission Denial',
+      btnInjectDirective: 'Inject Dynamic Prompt',
+      stagePrompt: 'Task & Context Rules',
+      stageLlm: 'AI Reasoning & Plan',
+      stageMcpHook: 'Tools & Skills Prep',
+      stagePermission: 'Safety Sentinel & Gate',
+      stageSandbox: 'Execution Sandbox',
+      stageFeedback: 'Verification & Next Step',
+      promptAnatomy: 'Task Structure & Context Tokens',
+      systemPrompt: 'System Rules & Guidelines',
+      mcpToolDefs: 'MCP Tool Schemas',
+      dynamicContext: 'Dynamic Context & AST State',
+      injectedDirectives: 'Injected Directives',
+      mcpRegistry: 'Active MCP Server Registry',
+      hookTimeline: 'Hook Lifecycle Stream',
+      zeroTrustSandbox: 'Zero-Trust Capability Matrix',
+      securityFirewall: 'Least-Privilege Security Rules',
+      tokenBurnBreakdown: 'Token Layer Distribution',
+      livePacketStream: 'Dynamic Packet Trace',
+      tabCallChain: 'Call Chain & Orderly Flow',
+      stepNumber: 'Execution Step',
+      callerCallee: 'Caller ➔ Callee',
+      autoFlow: 'Auto Flow (Loop)',
+      stepThrough: 'Step Through (Next)',
+      resetChain: 'Reset Pipeline',
+      flowRate: 'Packet Speed',
+      scenarioSelector: 'Pipeline Scenario',
+      scenarioStandard: 'Normal Tool Execution Chain',
+      scenarioBlocked: 'Zero-Trust Denial & Intercept',
+      scenarioMultiMcp: 'Multi-MCP Coordinated Pipeline',
+      dataPayloads: 'Flowing Data Packets & Payloads',
+    },
   },
 
   zh: {
@@ -389,5 +475,48 @@ export const translations: Record<Language, Translations> = {
     btnDownload: '下载 .py 文件',
     modalRunLocally: '本地终端运行命令:',
     modalDesc: '纯 Linux/macOS 终端 Textual 交互式界面',
+
+    // Agent Black Box Deconstruction HUD
+    blackBox: {
+      title: 'AGENT 黑盒全景透视阵列',
+      subtitle: '提示词剖析 • MCP HOOK 拦截 • 权限与沙箱管控 • 动态运行动效',
+      tabPipeline: '⚡ 黑盒动态全景拓扑',
+      tabPrompts: '🔮 提示词层级与实时注入',
+      tabMcpHooks: '🪝 MCP Hook 协议链路监控',
+      tabPermissions: '🛡️ 零信任权限与沙箱矩阵',
+      btnRunFullTrace: '运行黑盒全链路模拟',
+      btnTriggerMcpHook: '触发 MCP PreTool Hook 拦截',
+      btnSimulateDenial: '模拟越权拦截 (Denial)',
+      btnInjectDirective: '注入自定义需求指令',
+      stagePrompt: '需求输入与规则设定',
+      stageLlm: 'AI 思考与任务规划',
+      stageMcpHook: '工具与技能准备',
+      stagePermission: '安全检查与权限门禁',
+      stageSandbox: '受控环境实际执行',
+      stageFeedback: '执行验证与下一步',
+      promptAnatomy: '任务输入结构与上下文消耗',
+      systemPrompt: '系统规则与安全守则',
+      mcpToolDefs: '可用工具与命令定义 (MCP)',
+      dynamicContext: '当前工作区代码与上下文',
+      injectedDirectives: '用户补充的新需求',
+      mcpRegistry: '已连接的扩展服务 (MCP)',
+      hookTimeline: '工具调用生命周期',
+      zeroTrustSandbox: '安全执行能力边界',
+      securityFirewall: '高危命令拦截规则',
+      tokenBurnBreakdown: 'Token 层级消耗分布',
+      livePacketStream: '毫秒级动态数据包轨迹',
+      tabCallChain: '时序调用链路与数据流',
+      stepNumber: '执行步骤',
+      callerCallee: '调用方 ➔ 承接节点',
+      autoFlow: '自动流动 (连续循环)',
+      stepThrough: '单步推进 (Next Step)',
+      resetChain: '重置链路',
+      flowRate: '数据包流速',
+      scenarioSelector: '执行链路场景',
+      scenarioStandard: '标准工具调用链路 (AST 解析与编辑)',
+      scenarioBlocked: '零信任越权阻断链路 (高危拦截)',
+      scenarioMultiMcp: '多 MCP 协同编排链路 (分布式)',
+      dataPayloads: '动态流转数据包与报文',
+    },
   },
 };

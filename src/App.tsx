@@ -22,15 +22,21 @@ import { SessionTabBar } from './components/SessionTabBar';
 import { FinOpsBar } from './components/FinOpsBar';
 import { AdvisorPanel } from './components/AdvisorPanel';
 import { MainSessionPanel } from './components/MainSessionPanel';
-import { JevRouterPanel } from './components/JevRouterPanel';
 import { SubagentsDispatcherPanel } from './components/SubagentsDispatcherPanel';
 import { LiveSessionLog } from './components/LiveSessionLog';
 import { InteractiveCliBar } from './components/InteractiveCliBar';
-import { NeuralConnectors } from './components/NeuralConnectors';
 import { NativeTuiModal } from './components/NativeTuiModal';
 import { LocalAgentModal } from './components/LocalAgentModal';
+import { AgentBlackBoxMonitor } from './components/AgentBlackBoxMonitor';
+import { AgentDynamicFlowHero } from './components/AgentDynamicFlowHero';
+import { MultiSessionFleetGrid } from './components/MultiSessionFleetGrid';
+import { Agent3dArchitectureTopology } from './components/Agent3dArchitectureTopology';
 import { telemetryBus } from './services/websocket';
 import { soundFx } from './utils/audio';
+import { generate60mHistory } from './utils/finOpsHistory';
+import { BlackBoxStage } from './types/matrix';
+
+export type DashboardViewMode = 'conduit' | '3d-topology' | 'fleet-matrix' | 'drill-down' | 'overview';
 
 export default function App() {
   const [language, setLanguage] = useState<Language>('zh');
@@ -42,6 +48,8 @@ export default function App() {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [isTuiModalOpen, setIsTuiModalOpen] = useState(false);
   const [isLocalAgentModalOpen, setIsLocalAgentModalOpen] = useState(false);
+  const [dashboardViewMode, setDashboardViewMode] = useState<DashboardViewMode>('conduit');
+  const [drillDownStage, setDrillDownStage] = useState<BlackBoxStage | null>(null);
 
   // Real System & Git status telemetry
   const [realStatus, setRealStatus] = useState<RealSystemStatus | null>(null);
@@ -74,6 +82,7 @@ export default function App() {
         cyclomaticComplexityDelta: 0,
         loopCircuitBreakerCount: 0,
         totalSessionCost: 0.032,
+        historical60m: generate60mHistory(0.03, 0.09, 'real', 0.05),
       },
       jev: {
         pInline: 0.22,
@@ -154,6 +163,7 @@ export default function App() {
         cyclomaticComplexityDelta: 2,
         loopCircuitBreakerCount: 0,
         totalSessionCost: 0.428,
+        historical60m: generate60mHistory(0.12, 0.28, 'auth', 0.18),
       },
       jev: {
         pInline: 0.14,
@@ -234,6 +244,7 @@ export default function App() {
         cyclomaticComplexityDelta: 1,
         loopCircuitBreakerCount: 0,
         totalSessionCost: 0.284,
+        historical60m: generate60mHistory(0.16, 0.32, 'k8s', 0.24),
       },
       jev: {
         pInline: 0.25,
@@ -314,6 +325,7 @@ export default function App() {
         cyclomaticComplexityDelta: -3,
         loopCircuitBreakerCount: 0,
         totalSessionCost: 0.192,
+        historical60m: generate60mHistory(0.10, 0.22, 'doris', 0.14),
       },
       jev: {
         pInline: 0.45,
@@ -770,6 +782,107 @@ export default function App() {
     });
   };
 
+  // Cross-Session HITL Approval
+  const handleApproveSessionHitl = (sessionId: string) => {
+    soundFx.playChirp(1200, 0.08);
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, isBlocked: false, pendingHitl: undefined } : s))
+    );
+    if (sessionId === activeSessionId) {
+      setAdvisor((prev) => ({
+        ...prev,
+        status: 'standby',
+        alertActive: false,
+        riskScore: 0.4,
+        alertReason: '',
+        pendingHitl: undefined,
+        checks: prev.checks.map((c) => ({ ...c, status: 'pass' })),
+      }));
+    }
+    addLog({
+      agentTag: 'SUPERVISOR',
+      agentColor: 'emerald',
+      category: 'hitl',
+      message: `跨会话审批: 会话 [${sessionId}] 权限审核通过，零信任熔断已解除。`,
+    });
+  };
+
+  // Add New Concurrent Session
+  const handleAddSession = (newSess: Partial<SessionWorkspace>) => {
+    soundFx.playChirp(880, 0.1);
+    const newWorkspace: SessionWorkspace = {
+      id: newSess.id || `sess-${Date.now().toString().slice(-4)}`,
+      tag: newSess.tag || '#new-agent',
+      title: newSess.title || '新增 Claude Code 实例',
+      branch: newSess.branch || 'main',
+      activeFile: newSess.activeFile || 'src/main.ts',
+      step: 1,
+      totalSteps: 5,
+      directive: newSess.directive || '新并发任务初始化中...',
+      activeDiff: {
+        filePath: newSess.activeFile || 'src/main.ts',
+        oldCode: '// 原始基线',
+        newCode: '// 独立沙箱已就绪...',
+      },
+      finOps: {
+        burnRatePerMin: 0.12,
+        burnTrend: [0.08, 0.10, 0.12],
+        tokensUsed: 14200,
+        maxTokens: 200000,
+        watermarkPct: 7.1,
+        cyclomaticComplexityDelta: 0,
+        loopCircuitBreakerCount: 0,
+        totalSessionCost: 0.045,
+        historical60m: generate60mHistory(0.08, 0.18, 'real', 0.12),
+      },
+      jev: {
+        pInline: 0.3,
+        pSubagents: 0.65,
+        pEscalate: 0.05,
+        entropy: 0.4,
+        confidence: 0.95,
+        monteCarloSamples: 5000,
+        decisionRule: 'ARGMAX[ JEV ] => DELEGATE_TRIPLE_SUBAGENTS',
+      },
+      subagents: [
+        {
+          id: `sub-${Date.now()}-1`,
+          name: 'Worker #01',
+          model: 'Claude 3.5 Haiku',
+          type: 'worker',
+          badge: '[New-Task]',
+          status: 'running',
+          progress: 35,
+          currentPayload: 'AST Analysis and context ingestion',
+          itemsProcessed: 3,
+          totalItems: 8,
+          frequencyHz: 125,
+          sparkline: [10, 20, 28, 35],
+        },
+      ],
+      isBlocked: false,
+    };
+
+    setSessions((prev) => [...prev, newWorkspace]);
+    setActiveSessionId(newWorkspace.id);
+    addLog({
+      agentTag: 'FLEET',
+      agentColor: 'cyan',
+      category: 'system',
+      message: `已拉起并发 Claude Code 实例: [${newWorkspace.tag}]，已分配独立沙箱命名空间。`,
+    });
+  };
+
+  const handlePauseSession = (sessionId: string) => {
+    soundFx.playKeyClick();
+    addLog({
+      agentTag: 'FLEET',
+      agentColor: 'amber',
+      category: 'system',
+      message: `已发送挂起信号至会话 [${sessionId}]，暂停当前子进程与工具调用。`,
+    });
+  };
+
   // Trigger high-risk test button helper
   const handleTriggerHighRiskTest = (type = 'auth') => {
     if (type === 'k8s') {
@@ -835,6 +948,24 @@ export default function App() {
         message: `测试调用失败: ${err.message}`,
       });
     }
+  };
+
+  // Black Box & 3D Visualizer Handlers
+  const handleBlackBoxPromptInject = (promptText: string) => {
+    addLog({
+      agentTag: 'SUPERVISOR',
+      agentColor: 'purple',
+      category: 'system',
+      message: `[黑盒透视] 已向工作区智能体注入动态提示词: "${promptText.slice(0, 60)}..."`,
+    });
+  };
+
+  const handleBlackBoxHookTest = (type: 'pre' | 'post' | 'blocked') => {
+    handleTriggerRealTest(type === 'blocked' ? 'high' : 'normal');
+  };
+
+  const handleBlackBoxDenial = () => {
+    handleTriggerHighRiskTest('auth');
   };
 
   // Session Switching
@@ -1192,102 +1323,349 @@ export default function App() {
 
       {/* Main Container */}
       <main className="relative flex-1 p-3 lg:p-4 max-w-[1600px] w-full mx-auto flex flex-col gap-3">
-        {/* Multi-Session Fleet Tabs (Real Workspace First, then 3 Simulation Scenarios) */}
-        <SessionTabBar
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          language={language}
-          onSelectSession={handleSelectSession}
-        />
-
-        {/* FinOps & Code Quality Watermark Bar */}
-        <FinOpsBar metrics={activeSession.finOps} language={language} />
-
-        {/* Neural Topology Workspace with SVG Laser Connectors */}
-        <div className="relative">
-          <NeuralConnectors
-            alertActive={advisor.alertActive || activeSession.isBlocked}
-            activeStep={activeSession.step}
-            riskPercent={`${advisor.riskScore.toFixed(1)}%`}
-            language={language}
-          />
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 relative z-20">
-            {/* Left 4 Cols: Purple Dashed Advisor (Opus / o3-pro) with HITL Gatekeeper */}
-            <div className="lg:col-span-4 flex flex-col">
-              <AdvisorPanel
-                advisor={advisor}
-                mode={mode}
-                language={language}
-                onAuthorizePatch={() => handleApproveHitl('quick')}
-                onDismissAlert={() => handleRollbackHitl('dismiss')}
-                onTriggerAlert={() => handleTriggerHighRiskTest('auth')}
-                onApproveHitl={handleApproveHitl}
-                onRollbackHitl={handleRollbackHitl}
-                onInjectPromptHitl={handleInjectPromptHitl}
-                onTriggerHighRiskTest={handleTriggerHighRiskTest}
-              />
+        {/* Global Multi-Session HITL Approval Alert (Surfaces if ANY background session is blocked) */}
+        {sessions.some((s) => s.isBlocked) && (
+          <div className="p-3 rounded-xl bg-gradient-to-r from-rose-950/90 via-[#180812] to-amber-950/80 border border-rose-500/80 shadow-[0_0_25px_rgba(244,63,94,0.3)] flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-rose-200 animate-pulse">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl">🚨</span>
+              <div>
+                <span className="font-bold text-rose-300">
+                  {language === 'zh' ? '【全局多会话告警】检测到有并发实例处于零信任热熔断拦截状态！' : '[FLEET ALERT] Concurrent session blocked by Zero-Trust Sentinel!'}
+                </span>
+                <div className="text-[11px] text-rose-300/80 mt-0.5">
+                  {sessions
+                    .filter((s) => s.isBlocked)
+                    .map((s) => `实例 [${s.tag}] 目标文件: ${s.activeFile}`)
+                    .join(' | ')}
+                </div>
+              </div>
             </div>
 
-            {/* Right 8 Cols: Main Session, JEV Router, Haiku Subagents */}
-            <div className="lg:col-span-8 flex flex-col gap-3">
-              {/* Amber/Emerald Dashed Main Session Controller (Bound to Real Git & CWD) */}
-              <MainSessionPanel
-                mode={mode}
-                language={language}
-                step={activeSession.step}
-                totalSteps={activeSession.totalSteps}
-                tokensUsed={activeSession.finOps.tokensUsed}
-                maxTokens={activeSession.finOps.maxTokens}
-                activeFile={activeSession.activeFile}
-                activeDiff={activeSession.activeDiff}
-                goal={activeSession.directive}
-                branch={activeSession.branch}
-                sessionTag={activeSession.tag}
-                isBlocked={activeSession.isBlocked}
-                isRealWorkspace={activeSession.isRealWorkspace}
-                realCwd={realStatus?.cwd}
-                realCommit={realStatus?.gitRecentCommit}
-                realModifiedFiles={realStatus?.modifiedFiles}
-                hasClaudeHooks={hasClaudeHooks}
-              />
+            <div className="flex items-center gap-2">
+              {sessions.find((s) => s.isBlocked) && (
+                <>
+                  <button
+                    onClick={() => {
+                      const blocked = sessions.find((s) => s.isBlocked);
+                      if (blocked) handleSelectSession(blocked.id);
+                    }}
+                    className="px-3 py-1 rounded-lg bg-black/60 hover:bg-black/80 text-rose-200 border border-rose-500/60 font-bold transition cursor-pointer"
+                  >
+                    {language === 'zh' ? '🔍 切换聚焦该会话' : 'Focus Session'}
+                  </button>
 
-              {/* Cyan Dashed JEV Fork Probability Router */}
-              <JevRouterPanel
-                metrics={activeSession.jev}
-                language={language}
-                onRecalculate={recalculateJev}
-                onForceSubagents={() => {
-                  setSessions((prev) =>
-                    prev.map((s) =>
-                      s.id === activeSessionId
-                        ? { ...s, jev: { ...s.jev, pSubagents: 0.94, pInline: 0.04, pEscalate: 0.02 } }
-                        : s
-                    )
-                  );
-                }}
-                onForceInline={() => {
-                  setSessions((prev) =>
-                    prev.map((s) =>
-                      s.id === activeSessionId
-                        ? { ...s, jev: { ...s.jev, pSubagents: 0.1, pInline: 0.88, pEscalate: 0.02 } }
-                        : s
-                    )
-                  );
-                }}
-              />
-
-              {/* Emerald Dashed Haiku / Codex-mini Subagent Dispatcher (with Oscilloscope) */}
-              <SubagentsDispatcherPanel
-                mode={mode}
-                language={language}
-                subagents={activeSession.subagents}
-                onTriggerWorker={triggerWorkerTick}
-                onRestartAll={restartSubagents}
-              />
+                  <button
+                    onClick={() => {
+                      const blocked = sessions.find((s) => s.isBlocked);
+                      if (blocked) handleApproveSessionHitl(blocked.id);
+                    }}
+                    className="px-3.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-bold shadow-[0_0_15px_rgba(244,63,94,0.5)] transition cursor-pointer"
+                  >
+                    {language === 'zh' ? '⚡ 一键快速放行授权' : 'Approve & Resume'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
+        )}
+
+        {/* Top Control Bar: Multi-Session Fleet Tabs + Executive View Mode Tabs */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 bg-[#030713]/90 border border-cyan-900/50 p-2 rounded-xl backdrop-blur-md">
+          {/* Multi-Session Fleet Tabs */}
+          <div className="flex-1 overflow-x-auto">
+            <SessionTabBar
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              language={language}
+              onSelectSession={handleSelectSession}
+            />
+          </div>
+
+          {/* Clean Executive View Mode Switcher */}
+          <div className="flex items-center gap-1 shrink-0 font-mono text-xs border-t lg:border-t-0 lg:border-l border-cyan-900/50 pt-2 lg:pt-0 lg:pl-3">
+            <button
+              onClick={() => {
+                soundFx.playKeyClick();
+                setDashboardViewMode('conduit');
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                dashboardViewMode === 'conduit'
+                  ? 'bg-cyan-950 text-cyan-200 border border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.35)]'
+                  : 'bg-black/50 text-slate-400 border border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <span>⚡</span>
+              <span>{language === 'zh' ? '主体流转' : 'Conduit'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                soundFx.playKeyClick();
+                setDashboardViewMode('3d-topology');
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                dashboardViewMode === '3d-topology'
+                  ? 'bg-cyan-950 text-cyan-200 border border-cyan-400 shadow-[0_0_12px_rgba(0,240,255,0.35)]'
+                  : 'bg-black/50 text-slate-400 border border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <span>🪐</span>
+              <span>{language === 'zh' ? '3D 真实拓扑' : '3D Topology'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                soundFx.playKeyClick();
+                setDashboardViewMode('fleet-matrix');
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                dashboardViewMode === 'fleet-matrix'
+                  ? 'bg-teal-950 text-teal-200 border border-teal-400 shadow-[0_0_12px_rgba(45,212,191,0.35)]'
+                  : 'bg-black/50 text-slate-400 border border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <span>🔲</span>
+              <span>{language === 'zh' ? '多会话矩阵' : 'Fleet Matrix'}</span>
+              <span className="px-1 py-0.2 rounded text-[9px] bg-teal-900/80 text-teal-300 font-bold">
+                {sessions.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                soundFx.playKeyClick();
+                setDashboardViewMode('drill-down');
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                dashboardViewMode === 'drill-down'
+                  ? 'bg-purple-950 text-purple-200 border border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.35)]'
+                  : 'bg-black/50 text-slate-400 border border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <span>🔍</span>
+              <span>{language === 'zh' ? '深度下钻' : 'Drill-Down'}</span>
+            </button>
+
+            <button
+              onClick={() => {
+                soundFx.playKeyClick();
+                setDashboardViewMode('overview');
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                dashboardViewMode === 'overview'
+                  ? 'bg-indigo-950 text-indigo-200 border border-indigo-400 shadow-[0_0_12px_rgba(99,102,241,0.35)]'
+                  : 'bg-black/50 text-slate-400 border border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              <span>📊</span>
+              <span>{language === 'zh' ? '经典全景' : 'Overview'}</span>
+            </button>
+          </div>
         </div>
+
+        {/* View Pane 1: Dynamic Flow Calling Conduit (主体流转入口) */}
+        {dashboardViewMode === 'conduit' && (
+          <div className="flex flex-col gap-3">
+            {/* FinOps & Code Quality Watermark Bar with D3 Line Chart */}
+            <FinOpsBar
+              metrics={activeSession.finOps}
+              language={language}
+              agentTag={activeSession.tag}
+              isRealWorkspace={activeSession.isRealWorkspace}
+            />
+
+            <AgentDynamicFlowHero
+              language={language}
+              mode={mode}
+              activeFile={activeSession.activeFile}
+              directive={activeSession.directive}
+              isBlocked={activeSession.isBlocked}
+              isRealWorkspace={activeSession.isRealWorkspace}
+              selectedStage={drillDownStage}
+              onSelectStage={(stage) => {
+                setDrillDownStage(stage);
+                addLog({
+                  agentTag: 'DYNAMIC-FLOW',
+                  agentColor: 'cyan',
+                  category: 'system',
+                  message: `流转视口已切换聚焦至: [${stage.toUpperCase()}] 阶段节点`,
+                });
+              }}
+              onOpenDrillDown={(stage) => {
+                setDrillDownStage(stage);
+                setDashboardViewMode('drill-down');
+                addLog({
+                  agentTag: 'DRILL-DOWN',
+                  agentColor: 'purple',
+                  category: 'system',
+                  message: `触发阶段 [${stage.toUpperCase()}] 深度下钻解析面板`,
+                });
+              }}
+              onTriggerTrace={() => {
+                addLog({
+                  agentTag: 'PULSE-TRACE',
+                  agentColor: 'cyan',
+                  category: 'system',
+                  message: '动态流转脉冲已激发: 穿透任务输入、工具准备、AI 规划与安全执行',
+                });
+              }}
+              onTriggerHook={() => {
+                handleTriggerRealTest('normal');
+              }}
+              onTriggerDenial={() => {
+                handleTriggerHighRiskTest('auth');
+              }}
+            />
+          </div>
+        )}
+
+        {/* View Pane 2: Meaningful 3D Architecture Topology (3D 真实拓扑) */}
+        {dashboardViewMode === '3d-topology' && (
+          <div className="flex flex-col gap-3">
+            <Agent3dArchitectureTopology
+              language={language}
+              mode={mode}
+              activeStage={drillDownStage || 'prompt'}
+              isBlocked={activeSession.isBlocked}
+              isRealWorkspace={activeSession.isRealWorkspace}
+              onSelectStage={(stage) => {
+                setDrillDownStage(stage);
+                addLog({
+                  agentTag: '3D-TOPOLOGY',
+                  agentColor: 'cyan',
+                  category: 'system',
+                  message: `3D 空间架构已聚焦至基站: [${stage.toUpperCase()}]`,
+                });
+              }}
+              onOpenDrillDown={(stage) => {
+                setDrillDownStage(stage);
+                setDashboardViewMode('drill-down');
+                addLog({
+                  agentTag: 'DRILL-DOWN',
+                  agentColor: 'purple',
+                  category: 'system',
+                  message: `从 3D 空间一键下钻至 [${stage.toUpperCase()}] 黑盒解析`,
+                });
+              }}
+              onTriggerTrace={() => {
+                addLog({
+                  agentTag: '3D-PULSE',
+                  agentColor: 'cyan',
+                  category: 'system',
+                  message: '3D 星轨能量光子已激发，正通过激光导管流转各基站',
+                });
+              }}
+              onTriggerHook={() => {
+                handleTriggerRealTest('normal');
+              }}
+              onTriggerDenial={() => {
+                handleTriggerHighRiskTest('auth');
+              }}
+            />
+          </div>
+        )}
+
+        {/* View Pane 3: Multi-Session Concurrent Fleet Matrix (多会话并发矩阵) */}
+        {dashboardViewMode === 'fleet-matrix' && (
+          <div className="flex flex-col gap-3">
+            <MultiSessionFleetGrid
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              language={language}
+              onSelectSession={(id) => {
+                handleSelectSession(id);
+                addLog({
+                  agentTag: 'FLEET',
+                  agentColor: 'cyan',
+                  category: 'system',
+                  message: `工作区焦点已切换至并发会话: [${id}]`,
+                });
+              }}
+              onApproveSessionHitl={handleApproveSessionHitl}
+              onAddSession={handleAddSession}
+              onPauseSession={handlePauseSession}
+            />
+          </div>
+        )}
+
+        {/* View Pane 4: Black Box Deep Drill-Down Matrix (深度下钻面板) */}
+        {dashboardViewMode === 'drill-down' && (
+          <div className="flex flex-col gap-3">
+            <AgentBlackBoxMonitor
+              language={language}
+              mode={mode}
+              activeFile={activeSession.activeFile}
+              directive={activeSession.directive}
+              isRealWorkspace={activeSession.isRealWorkspace}
+              selectedDrillDownStage={drillDownStage}
+              onSelectStage={(stage) => setDrillDownStage(stage)}
+              onInjectPrompt={handleBlackBoxPromptInject}
+              onTriggerHookTest={handleBlackBoxHookTest}
+              onSimulateDenial={handleBlackBoxDenial}
+            />
+          </div>
+        )}
+
+        {/* View Pane 5: Classic Overview (12-Col Workspace Panels Grid) */}
+        {dashboardViewMode === 'overview' && (
+          <div className="flex flex-col gap-3">
+            <FinOpsBar
+              metrics={activeSession.finOps}
+              language={language}
+              agentTag={activeSession.tag}
+              isRealWorkspace={activeSession.isRealWorkspace}
+            />
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 relative z-20">
+              {/* Left 4 Cols: Purple Dashed Advisor (Opus / o3-pro) with HITL Gatekeeper */}
+              <div className="lg:col-span-4 flex flex-col">
+                <AdvisorPanel
+                  advisor={advisor}
+                  mode={mode}
+                  language={language}
+                  onAuthorizePatch={() => handleApproveHitl('quick')}
+                  onDismissAlert={() => handleRollbackHitl('dismiss')}
+                  onTriggerAlert={() => handleTriggerHighRiskTest('auth')}
+                  onApproveHitl={handleApproveHitl}
+                  onRollbackHitl={handleRollbackHitl}
+                  onInjectPromptHitl={handleInjectPromptHitl}
+                  onTriggerHighRiskTest={handleTriggerHighRiskTest}
+                />
+              </div>
+
+              {/* Right 8 Cols: Main Session & Haiku Subagents */}
+              <div className="lg:col-span-8 flex flex-col gap-3">
+                <MainSessionPanel
+                  mode={mode}
+                  language={language}
+                  step={activeSession.step}
+                  totalSteps={activeSession.totalSteps}
+                  tokensUsed={activeSession.finOps.tokensUsed}
+                  maxTokens={activeSession.finOps.maxTokens}
+                  activeFile={activeSession.activeFile}
+                  activeDiff={activeSession.activeDiff}
+                  goal={activeSession.directive}
+                  branch={activeSession.branch}
+                  sessionTag={activeSession.tag}
+                  isBlocked={activeSession.isBlocked}
+                  isRealWorkspace={activeSession.isRealWorkspace}
+                  realCwd={realStatus?.cwd}
+                  realCommit={realStatus?.gitRecentCommit}
+                  realModifiedFiles={realStatus?.modifiedFiles}
+                  hasClaudeHooks={hasClaudeHooks}
+                />
+
+                <SubagentsDispatcherPanel
+                  mode={mode}
+                  language={language}
+                  subagents={activeSession.subagents}
+                  onTriggerWorker={triggerWorkerTick}
+                  onRestartAll={restartSubagents}
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Interactive CLI Prompt Bar with Buttons & Text Input */}
         <div className="mt-1">

@@ -84,13 +84,47 @@
 
 @keyframes laser-flow {
   0% {
-    stroke-dashoffset: 100;
+    stroke-dashoffset: 200;
   }
   100% {
     stroke-dashoffset: 0;
   }
 }
 
+@keyframes laser-flow-reverse {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 200;
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .animate-laser {
   animation: laser-flow 1.8s linear infinite;
+}
+
+.animate-laser-flow {
+  animation: laser-flow 2.2s linear infinite;
+}
+
+.animate-laser-flow-fast {
+  animation: laser-flow 0.9s linear infinite;
+}
+
+.animate-laser-flow-reverse {
+  animation: laser-flow-reverse 2.8s linear infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 16s linear infinite;
 }
