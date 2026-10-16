@@ -50,6 +50,7 @@ export default function App() {
   const [isLocalAgentModalOpen, setIsLocalAgentModalOpen] = useState(false);
   const [dashboardViewMode, setDashboardViewMode] = useState<DashboardViewMode>('conduit');
   const [drillDownStage, setDrillDownStage] = useState<BlackBoxStage | null>(null);
+  const [observedTopologyStage, setObservedTopologyStage] = useState<BlackBoxStage>();
 
   // Real System & Git status telemetry
   const [realStatus, setRealStatus] = useState<RealSystemStatus | null>(null);
@@ -439,6 +440,15 @@ export default function App() {
     }
   }, []);
 
+  // A stable callback prevents the flow view's stage effect from re-emitting on every log update.
+  const handleFlowStageSelected = useCallback((stage: BlackBoxStage) => {
+    setDrillDownStage(stage);
+    addLog({
+      agentTag: 'DYNAMIC-FLOW', agentColor: 'cyan', category: 'system',
+      message: `流转视口已切换聚焦至: [${stage.toUpperCase()}] 阶段节点`,
+    });
+  }, [addLog]);
+
   // Update real session workspace from system status
   const updateRealSessionFromStatus = useCallback((status: RealSystemStatus) => {
     setSessions((prev) =>
@@ -513,6 +523,7 @@ export default function App() {
         setHasClaudeHooks(Boolean(status.hasClaudeHooks));
         updateRealSessionFromStatus(status);
       } else if (event.type === 'exec_result') {
+        setObservedTopologyStage('feedback');
         const payload = event.payload as {
           command: string;
           output: string;
@@ -534,6 +545,7 @@ export default function App() {
           message: '本地 .claude/settings.json 钩子已成功注入，Claude Code 工具调用将自动重定向至本控制平面！',
         });
       } else if (event.type === 'hitl_blocked') {
+        setObservedTopologyStage('permission');
         const payload = event.payload as {
           id: string;
           targetPath: string;
@@ -550,6 +562,7 @@ export default function App() {
           payload.diffSnippet
         );
       } else if (event.type === 'tool_call') {
+        setObservedTopologyStage('mcp_hook');
         const p = event.payload as {
           name: string;
           args: string;
@@ -588,6 +601,8 @@ export default function App() {
             )
           );
         }
+      } else if (event.type === 'telemetry') {
+        setObservedTopologyStage('feedback');
       }
     });
 
@@ -1482,15 +1497,7 @@ export default function App() {
               isBlocked={activeSession.isBlocked}
               isRealWorkspace={activeSession.isRealWorkspace}
               selectedStage={drillDownStage}
-              onSelectStage={(stage) => {
-                setDrillDownStage(stage);
-                addLog({
-                  agentTag: 'DYNAMIC-FLOW',
-                  agentColor: 'cyan',
-                  category: 'system',
-                  message: `流转视口已切换聚焦至: [${stage.toUpperCase()}] 阶段节点`,
-                });
-              }}
+              onSelectStage={handleFlowStageSelected}
               onOpenDrillDown={(stage) => {
                 setDrillDownStage(stage);
                 setDashboardViewMode('drill-down');
@@ -1525,7 +1532,10 @@ export default function App() {
             <Agent3dArchitectureTopology
               language={language}
               mode={mode}
-              activeStage={drillDownStage || 'prompt'}
+              connectionState={wsState}
+              systemStatus={realStatus}
+              workspaceName={activeSession.branch}
+              activeStage={activeSession.isRealWorkspace ? (wsState === 'connected' ? observedTopologyStage : undefined) : (drillDownStage || 'prompt')}
               isBlocked={activeSession.isBlocked}
               isRealWorkspace={activeSession.isRealWorkspace}
               onSelectStage={(stage) => {
@@ -1552,7 +1562,7 @@ export default function App() {
                   agentTag: '3D-PULSE',
                   agentColor: 'cyan',
                   category: 'system',
-                  message: '3D 星轨能量光子已激发，正通过激光导管流转各基站',
+                  message: '已预览逻辑调用路径；动画不代表真实请求流量',
                 });
               }}
               onTriggerHook={() => {

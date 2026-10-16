@@ -10,7 +10,6 @@ import { soundFx } from '../utils/audio';
 import {
   Play,
   Pause,
-  SkipForward,
   RotateCcw,
   Zap,
   ShieldAlert,
@@ -34,7 +33,6 @@ import {
   Eye,
   Check,
   RefreshCw,
-  AlertTriangle,
   Maximize2,
   Minimize2,
   ZoomIn,
@@ -43,6 +41,65 @@ import {
   Brain,
 } from 'lucide-react';
 import { ModelDisplayModal, MODEL_PRESETS, ModelPreset } from './ModelDisplayModal';
+
+// Spread positions vertically while preserving card sizes and routing anchors.
+const FLOW_WIDTH = 1600;
+const FLOW_ROUTING_HEIGHT = 1260;
+const FLOW_HEIGHT = 1260;
+const flowExitY = (top: number, height: number) => top + height * FLOW_ROUTING_HEIGHT / FLOW_HEIGHT;
+const spinePaths = {
+  input: `M 185 ${flowExitY(55, 86)} L 185 155`,
+  fusion: `M 565 ${flowExitY(65, 100)} L 565 185`,
+  model: `M 565 ${flowExitY(185, 190)} L 565 395`,
+  tools: `M 972 ${flowExitY(265, 90)} L 972 375`,
+  hooks: `M 972 ${flowExitY(375, 90)} L 972 480`,
+  observation: `M 1380 ${flowExitY(65, 105)} L 1380 195`,
+  finalize: `M 1380 ${flowExitY(195, 115)} L 1380 335`,
+  delivery: `M 1380 ${flowExitY(335, 105)} L 1380 465`,
+};
+
+const FLOW_LAYOUT: Record<string, Pick<TopologyNode, 'x' | 'y' | 'w' | 'h'>> = {
+  user_signal: { x: 620, y: 52, w: 360, h: 68 },
+  cli_bootstrap: { x: 620, y: 152, w: 360, h: 78 },
+  config_layer: { x: 32, y: 236, w: 264, h: 104 },
+  project_rules: { x: 32, y: 414, w: 264, h: 104 },
+  context_sources: { x: 32, y: 592, w: 264, h: 104 },
+  prompt_assembly: { x: 620, y: 278, w: 360, h: 112 },
+  model_inference: { x: 640, y: 432, w: 320, h: 126 },
+  agent_orchestrator: { x: 640, y: 596, w: 320, h: 96 },
+  capability_skills: { x: 356, y: 748, w: 252, h: 88 },
+  capability_mcp: { x: 620, y: 748, w: 252, h: 88 },
+  capability_tools: { x: 884, y: 748, w: 252, h: 88 },
+  cross_hooks: { x: 1234, y: 748, w: 300, h: 88 },
+  cross_permission: { x: 1234, y: 862, w: 300, h: 92 },
+  observation: { x: 620, y: 866, w: 360, h: 72 },
+  control_loop: { x: 620, y: 964, w: 360, h: 82 },
+  finalize: { x: 640, y: 1070, w: 320, h: 64 },
+  user_output: { x: 660, y: 1154, w: 280, h: 64 },
+};
+
+const FLOW_CONNECTION_SPECS = [
+  ['user_signal', 'cli_bootstrap', 1, 'cyan'],
+  ['cli_bootstrap', 'prompt_assembly', 2, 'cyan'],
+  ['config_layer', 'prompt_assembly', 3, 'purple'],
+  ['project_rules', 'prompt_assembly', 3, 'purple'],
+  ['context_sources', 'prompt_assembly', 3, 'purple'],
+  ['prompt_assembly', 'model_inference', 4, 'cyan'],
+  ['model_inference', 'agent_orchestrator', 5, 'cyan'],
+  ['agent_orchestrator', 'capability_skills', 6, 'cyan'],
+  ['agent_orchestrator', 'capability_mcp', 6, 'cyan'],
+  ['agent_orchestrator', 'capability_tools', 6, 'cyan'],
+  ['capability_skills', 'observation', 7, 'purple'],
+  ['capability_mcp', 'observation', 7, 'cyan'],
+  ['capability_tools', 'observation', 7, 'cyan'],
+  ['capability_tools', 'cross_hooks', 8, 'amber'],
+  ['cross_hooks', 'cross_permission', 8, 'amber'],
+  ['cross_permission', 'observation', 9, 'emerald'],
+  ['observation', 'control_loop', 10, 'cyan'],
+  ['control_loop', 'model_inference', 10, 'sky'],
+  ['control_loop', 'finalize', 11, 'emerald'],
+  ['finalize', 'user_output', 11, 'emerald'],
+] as const;
 
 export interface TopologyNode {
   id: string;
@@ -54,7 +111,7 @@ export interface TopologyNode {
   subtitleEn: string;
   category: 'input' | 'context' | 'model' | 'orchestrator' | 'capability' | 'policy' | 'loop' | 'output';
   tag?: string;
-  // Absolute coordinates in coordinate space (1080 x 810)
+  // Coordinates in the original 1600 × 780 routing space
   x: number;
   y: number;
   w: number;
@@ -107,10 +164,10 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Trace execution step state (1 to 11)
-  const [activeStep, setActiveStep] = useState<number>(5);
+  const [activeStep, setActiveStep] = useState<number>(1);
   const [isPlayingTrace, setIsPlayingTrace] = useState<boolean>(true);
   const [traceSpeed, setTraceSpeed] = useState<number>(1);
-  const [selectedNodeId, setSelectedNodeId] = useState<string>('model_inference');
+  const [selectedNodeId, setSelectedNodeId] = useState<string>('user_signal');
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [isSimulatingBlocked, setIsSimulatingBlocked] = useState<boolean>(isBlocked);
   const [loopbackActive, setLoopbackActive] = useState<boolean>(false);
@@ -201,6 +258,16 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
       isRisk: true,
     },
   ];
+  const selectedScenarioId = scenarioPresets.find((scenario) => scenario.prompt === userPromptInput)?.id || '';
+  const runScenario = (scenarioId: string) => {
+    const scenario = scenarioPresets.find((item) => item.id === scenarioId);
+    if (!scenario) return;
+    soundFx.playKeyClick();
+    setUserPromptInput(scenario.prompt);
+    setIsSimulatingBlocked(scenario.isRisk);
+    if (scenario.isRisk) onTriggerDenial?.();
+    handleRunTrace();
+  };
 
   // Sync blocked prop
   useEffect(() => {
@@ -629,6 +696,39 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
     [userPromptInput, isSimulatingBlocked, currentModel, thinkingEnabled, thinkingBudget, temperature]
   );
 
+  const layoutNodes = nodes.map((node) => ({ ...node, ...FLOW_LAYOUT[node.id] }));
+  const layoutNodeById = new Map(layoutNodes.map((node) => [node.id, node]));
+  const flowConnections = FLOW_CONNECTION_SPECS.map(([fromId, toId, step, color]) => {
+    const from = layoutNodeById.get(fromId)!;
+    const to = layoutNodeById.get(toId)!;
+    const fromCenterX = from.x + from.w / 2;
+    const fromCenterY = from.y + from.h / 2;
+    const toCenterX = to.x + to.w / 2;
+    const toCenterY = to.y + to.h / 2;
+    let path: string;
+
+    if (fromId === 'control_loop' && toId === 'model_inference') {
+      const loopLaneX = 1160;
+      path = `M ${from.x + from.w} ${fromCenterY} C ${loopLaneX} ${fromCenterY}, ${loopLaneX} ${toCenterY}, ${to.x + to.w} ${toCenterY}`;
+    } else if (Math.abs(fromCenterY - toCenterY) < 36) {
+      const movingRight = toCenterX > fromCenterX;
+      const startX = movingRight ? from.x + from.w : from.x;
+      const endX = movingRight ? to.x : to.x + to.w;
+      const controlX = (startX + endX) / 2;
+      path = `M ${startX} ${fromCenterY} C ${controlX} ${fromCenterY}, ${controlX} ${toCenterY}, ${endX} ${toCenterY}`;
+    } else if (fromId === 'config_layer' || fromId === 'project_rules' || fromId === 'context_sources') {
+      const startX = from.x + from.w;
+      const endX = to.x;
+      const controlX = (startX + endX) / 2;
+      path = `M ${startX} ${fromCenterY} C ${controlX} ${fromCenterY}, ${controlX} ${toCenterY}, ${endX} ${toCenterY}`;
+    } else {
+      const controlY = (from.y + from.h + to.y) / 2;
+      path = `M ${fromCenterX} ${from.y + from.h} C ${fromCenterX} ${controlY}, ${toCenterX} ${controlY}, ${toCenterX} ${to.y}`;
+    }
+
+    return { id: `${fromId}-${toId}`, fromId, toId, step, color, path };
+  });
+
   // Active inspected node
   const activeNode = useMemo(() => {
     return nodes.find((n) => n.id === selectedNodeId) || nodes[3];
@@ -960,8 +1060,8 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
       pulseT += 0.016 * traceSpeed;
       if (pulseT > 1) pulseT = 0;
 
-      const scaleX = width / 1600;
-      const scaleY = height / 780;
+      const scaleX = width / FLOW_WIDTH;
+      const scaleY = height / FLOW_ROUTING_HEIGHT;
 
       // Define real active trajectory conduits based on activeStep
       interface Trajectory {
@@ -979,7 +1079,7 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
 
       switch (activeStep) {
         case 1:
-          activeTrajectories = [{ x1: 185, y1: 141, x2: 185, y2: 155, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
+          activeTrajectories = [{ x1: 185, y1: flowExitY(55, 86), x2: 185, y2: 155, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
           break;
         case 2:
           activeTrajectories = [{ x1: 330, y1: 198, x2: 390, y2: 100, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
@@ -992,10 +1092,10 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
           ];
           break;
         case 4:
-          activeTrajectories = [{ x1: 565, y1: 165, x2: 565, y2: 185, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
+          activeTrajectories = [{ x1: 565, y1: flowExitY(65, 100), x2: 565, y2: 185, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
           break;
         case 5:
-          activeTrajectories = [{ x1: 565, y1: 375, x2: 565, y2: 395, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
+          activeTrajectories = [{ x1: 565, y1: flowExitY(185, 190), x2: 565, y2: 395, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
           break;
         case 6: // Orchestrator branch to 3 capabilities
           activeTrajectories = [
@@ -1024,7 +1124,7 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
           ];
           break;
         case 9:
-          activeTrajectories = [{ x1: 1380, y1: 170, x2: 1380, y2: 195, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
+          activeTrajectories = [{ x1: 1380, y1: flowExitY(65, 105), x2: 1380, y2: 195, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
           break;
         case 10: // Smooth loopback curved trajectory
           activeTrajectories = [
@@ -1042,12 +1142,12 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
           break;
         case 11: // Delivery
           activeTrajectories = [
-            { x1: 1380, y1: 310, x2: 1380, y2: 335, color: '#10b981', glow: 'rgba(16, 185, 129, 0.95)' },
-            { x1: 1380, y1: 440, x2: 1380, y2: 465, color: '#10b981', glow: 'rgba(16, 185, 129, 0.95)' },
+            { x1: 1380, y1: flowExitY(195, 115), x2: 1380, y2: 335, color: '#10b981', glow: 'rgba(16, 185, 129, 0.95)' },
+            { x1: 1380, y1: flowExitY(335, 105), x2: 1380, y2: 465, color: '#10b981', glow: 'rgba(16, 185, 129, 0.95)' },
           ];
           break;
         default:
-          activeTrajectories = [{ x1: 185, y1: 141, x2: 185, y2: 155, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
+          activeTrajectories = [{ x1: 185, y1: flowExitY(55, 86), x2: 185, y2: 155, color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.95)' }];
       }
 
       // Render each active trajectory with smooth organic ease, comet tails, and arrival shockwaves
@@ -1147,12 +1247,6 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
     onTriggerTrace?.();
   };
 
-  const handleStepPlus = () => {
-    soundFx.playKeyClick();
-    setIsPlayingTrace(false);
-    setActiveStep((prev) => (prev >= 11 ? 1 : prev + 1));
-  };
-
   const handleReset = () => {
     soundFx.playKeyClick();
     setActiveStep(1);
@@ -1164,10 +1258,10 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`w-full text-slate-200 flex flex-col font-sans select-none transition-all duration-300 ${
+      className={`w-full text-slate-200 flex flex-col font-sans transition-all duration-300 ${
         isFullscreen
           ? 'fixed inset-0 z-50 bg-[#02050f] overflow-y-auto p-2 sm:p-4 shadow-2xl'
-          : 'bg-[#050914] border border-cyan-500/30 rounded-2xl shadow-[0_0_60px_rgba(6,182,212,0.12)] relative overflow-hidden backdrop-blur-2xl'
+          : 'bg-[#080d15] border border-slate-700/80 rounded-xl shadow-[0_16px_48px_rgba(0,0,0,0.35)] relative overflow-hidden'
       }`}
     >
       {/* =========================================================================
@@ -1176,20 +1270,20 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 px-5 py-3 border-b border-cyan-900/50 bg-[#070e1c]/95 z-20">
         <div className="flex items-center gap-3">
           {/* Logo Badge [CC] */}
-          <div className="w-9 h-9 rounded-lg bg-cyan-950 border border-cyan-400 flex items-center justify-center shadow-[0_0_18px_rgba(0,240,255,0.4)] shrink-0">
-            <span className="text-cyan-300 font-black font-mono text-sm tracking-tighter">[CC]</span>
+          <div className="w-9 h-9 rounded-lg bg-[#14262b] border border-teal-700/70 flex items-center justify-center shrink-0">
+            <Network className="w-4 h-4 text-teal-300" />
           </div>
 
           <div>
-            <div className="text-[10px] font-mono tracking-widest text-cyan-400/90 uppercase font-bold">
-              NEURAL EXECUTION MAP // 2026
+            <div className="text-[10px] font-mono tracking-widest text-cyan-400/90 uppercase font-semibold">
+              AGENT MATRIX / WORKFLOW
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-base font-black tracking-wider text-slate-100 font-mono">
-                CLAUDE CODE // AGENT RUNTIME
+              <h1 className="text-base font-semibold text-slate-100">
+                {isZh ? '主体运行流程' : 'Agent execution flow'}
               </h1>
-              <span className="hidden md:inline-block text-[11px] font-mono text-slate-400">
-                PROMPT IN · REASONING CORE · TOOL ORCHESTRATION · RESULT OUT
+              <span className="hidden md:inline-block text-[11px] text-slate-500">
+                {isZh ? '从任务输入到结果交付' : 'From task input to delivered result'}
               </span>
             </div>
           </div>
@@ -1203,7 +1297,7 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
               soundFx.playKeyClick();
               setShowModelModal(true);
             }}
-            className="px-3 py-1.5 rounded-lg bg-[#0e162c] hover:bg-[#18264a] text-purple-200 border border-purple-500/50 hover:border-purple-400 text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer shadow-[0_0_12px_rgba(168,85,247,0.3)]"
+            className="px-3 py-1.5 rounded-md bg-[#111922] hover:bg-[#19242e] text-slate-200 border border-slate-700 hover:border-slate-500 text-xs font-medium flex items-center gap-1.5 transition cursor-pointer"
             title={isZh ? '打开大模型深度显示与参数推理面板' : 'Open Model Display & Reasoning Center'}
           >
             <Cpu className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
@@ -1216,43 +1310,16 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
             )}
           </button>
 
-          {/* FULLSCREEN TOGGLE BUTTON (全屏显示) */}
-          <button
-            onClick={handleToggleFullscreen}
-            className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition cursor-pointer border ${
-              isFullscreen
-                ? 'bg-cyan-500 text-black border-cyan-300 shadow-[0_0_15px_rgba(0,240,255,0.6)] animate-pulse'
-                : 'bg-[#0a1528] hover:bg-[#122344] text-cyan-300 border-cyan-700/60'
-            }`}
-            title={isFullscreen ? '退出全屏 [Esc]' : '全屏显示'}
-          >
-            {isFullscreen ? (
-              <>
-                <Minimize2 className="w-3.5 h-3.5" />
-                <span>{isZh ? '退出全屏' : 'EXIT FULL'}</span>
-              </>
-            ) : (
-              <>
-                <Maximize2 className="w-3.5 h-3.5" />
-                <span>{isZh ? '全屏显示' : 'FULLSCREEN'}</span>
-              </>
-            )}
-          </button>
-
           {/* Simulation status pill */}
           <div
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-mono ${
-              isSimulatingBlocked
-                ? 'bg-rose-950 border border-rose-500/60 text-rose-300 animate-pulse'
-                : 'bg-[#0a1528] border border-emerald-500/40 text-emerald-300'
-            }`}
+            className={`flex items-center gap-1.5 px-2 py-1 text-[10px] ${isSimulatingBlocked ? 'text-rose-300' : 'text-slate-400'}`}
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                isSimulatingBlocked ? 'bg-rose-400' : 'bg-emerald-400 animate-pulse'
+                isSimulatingBlocked ? 'bg-rose-400' : 'bg-emerald-400'
               }`}
             />
-            <span>{isSimulatingBlocked ? 'BLOCKED AT GATE' : 'SYSTEM SIMULATION'}</span>
+            <span>{isSimulatingBlocked ? (isZh ? '权限已拦截' : 'Blocked') : (isZh ? '演练模式' : 'Demo')}</span>
           </div>
 
           {/* RUN / PAUSE TRACE */}
@@ -1264,25 +1331,16 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                 handleRunTrace();
               }
             }}
-            className="px-3.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs font-mono flex items-center gap-1.5 transition cursor-pointer shadow-[0_0_15px_rgba(0,240,255,0.4)]"
+            className="px-3.5 py-1.5 rounded-md bg-teal-400 hover:bg-teal-300 text-slate-950 font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer"
           >
             {isPlayingTrace ? <Pause className="w-3.5 h-3.5 fill-black" /> : <Play className="w-3.5 h-3.5 fill-black" />}
             <span>{isPlayingTrace ? 'PAUSE' : 'RUN TRACE'}</span>
           </button>
 
-          {/* STEP + */}
-          <button
-            onClick={handleStepPlus}
-            className="px-3 py-1.5 rounded-lg bg-[#0e1c36] hover:bg-[#152a52] text-cyan-300 border border-cyan-700/60 font-bold text-xs font-mono flex items-center gap-1 transition cursor-pointer"
-          >
-            <SkipForward className="w-3.5 h-3.5" />
-            <span>STEP +</span>
-          </button>
-
           {/* RESET ↺ */}
           <button
             onClick={handleReset}
-            className="px-2.5 py-1.5 rounded-lg bg-[#0e1c36] hover:bg-[#152a52] text-slate-300 border border-slate-700 font-bold text-xs font-mono flex items-center gap-1 transition cursor-pointer"
+            className="px-2.5 py-1.5 rounded-md bg-[#111922] hover:bg-[#19242e] text-slate-300 border border-slate-700 font-medium text-xs flex items-center gap-1 transition cursor-pointer"
             title="Reset"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -1304,83 +1362,43 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
             ))}
           </div>
 
-          {/* High risk toggle simulation */}
-          <button
-            onClick={() => {
-              const nextState = !isSimulatingBlocked;
-              setIsSimulatingBlocked(nextState);
-              if (nextState) {
-                onTriggerDenial?.();
-                setUserPromptInput('执行高危指令：rm -rf / 释放系统空间');
-                setActiveStep(8);
-              } else {
-                setUserPromptInput('重构组件 ProductCard 为响应式网格布局，并执行 npm test 确保测试通过');
-              }
-            }}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center gap-1 transition cursor-pointer border ${
-              isSimulatingBlocked
-                ? 'bg-rose-950 text-rose-300 border-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.5)]'
-                : 'bg-[#120a10] text-slate-400 border-rose-900/60 hover:text-rose-300'
-            }`}
-            title="高危指令熔断拦截测试"
-          >
-            <AlertTriangle className="w-3 h-3 text-rose-400" />
-            <span>{isSimulatingBlocked ? '演练拦截中 🚨' : '演练高危拦截'}</span>
-          </button>
         </div>
       </div>
 
       {/* Subheader: Scenario Preset Switcher & Direct Prompt Ingestion */}
-      <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 px-5 py-2.5 bg-[#040813] border-b border-cyan-950/80 z-20 text-[11px] font-mono">
-        {/* Preset scenario tags */}
-        <div className="flex items-center gap-1.5 overflow-x-auto py-0.5 scrollbar-none">
-          <span className="text-slate-400 uppercase font-bold shrink-0 text-[10px]">SCENARIOS:</span>
-          {scenarioPresets.map((sc) => (
-            <button
-              key={sc.id}
-              onClick={() => {
-                soundFx.playKeyClick();
-                setUserPromptInput(sc.prompt);
-                setIsSimulatingBlocked(sc.isRisk);
-                if (sc.isRisk) onTriggerDenial?.();
-                handleRunTrace();
-              }}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap transition cursor-pointer border ${
-                userPromptInput === sc.prompt
-                  ? sc.isRisk
-                    ? 'bg-rose-950 text-rose-300 border-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.4)]'
-                    : 'bg-cyan-950 text-cyan-300 border-cyan-500 shadow-[0_0_10px_rgba(0,240,255,0.3)]'
-                  : 'bg-[#091222] text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700'
-              }`}
-            >
-              {sc.isRisk && <AlertTriangle className="w-2.5 h-2.5 inline mr-1 text-rose-400" />}
-              {sc.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Live Input Field */}
-        <div className="flex items-center gap-2 flex-1 max-w-xl">
-          <span className="text-cyan-400 shrink-0 font-bold text-[10px]">PROMPT:</span>
+      <div className="flex flex-col lg:flex-row lg:items-center gap-2.5 px-4 sm:px-5 py-3 bg-[#080e18] border-b border-slate-800 z-20">
+        <label className="flex items-center gap-2 shrink-0 text-[11px] text-slate-400">
+          <span>{isZh ? '场景' : 'Scenario'}</span>
+          <select
+            aria-label={isZh ? '选择流程场景' : 'Select workflow scenario'}
+            value={selectedScenarioId}
+            onChange={(event) => runScenario(event.target.value)}
+            className="h-9 max-w-[240px] rounded-md border border-slate-700 bg-[#101923] px-2.5 text-xs text-slate-200 outline-none focus:border-cyan-500"
+          >
+            <option value="">{isZh ? '自定义任务' : 'Custom task'}</option>
+            {scenarioPresets.map((scenario) => <option key={scenario.id} value={scenario.id}>{isZh ? scenario.label : scenario.id.replaceAll('_', ' ')}</option>)}
+          </select>
+        </label>
+        <label className="flex min-w-0 flex-1 items-center gap-2 rounded-md border border-slate-700 bg-[#0b121c] px-3 focus-within:border-cyan-600">
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-slate-500">{isZh ? '任务' : 'Task'}</span>
           <input
             type="text"
             value={userPromptInput}
-            onChange={(e) => setUserPromptInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleRunTrace();
-            }}
-            placeholder="输入自然语言需求，敲回车或点击 RUN TRACE..."
-            className="w-full bg-[#091224] border border-cyan-900/60 rounded px-2.5 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-400 font-mono transition"
+            onChange={(event) => setUserPromptInput(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') handleRunTrace(); }}
+            placeholder={isZh ? '描述要执行的任务' : 'Describe a task to run'}
+            className="h-9 min-w-0 w-full bg-transparent text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none"
           />
-        </div>
+          <span className="hidden shrink-0 text-[10px] text-slate-500 sm:inline">Enter ↵</span>
+        </label>
       </div>
 
       {/* =========================================================================
           MAIN TOPOLOGY & INSPECTOR CONTAINER (Responsive Dynamic Grid)
          ========================================================================= */}
-      <div className={`grid grid-cols-1 ${!isFullscreen && showInspector ? 'xl:grid-cols-[1fr_370px]' : 'grid-cols-1'} w-full relative transition-all duration-300`}>
+      <div className={`grid grid-cols-1 ${!isFullscreen && showInspector ? 'xl:grid-cols-[minmax(0,1fr)_280px]' : 'grid-cols-1'} w-full relative transition-all duration-300`}>
         {/* ================= LEFT: TOPOLOGY CANVAS FRAME ================= */}
-        <div className="p-3 sm:p-4 flex flex-col justify-start items-center bg-[#030712] relative overflow-hidden">
+        <div className="min-w-0 p-3 sm:p-4 flex flex-col justify-start items-center bg-[#030712] relative overflow-hidden">
           {/* Cyber Framing Brackets */}
           <div className="w-full relative rounded-xl border border-cyan-900/40 bg-[#040814]/80 p-3 sm:p-4 shadow-inner">
             {/* Top Subheader inside Frame: System Indicator + Active Step */}
@@ -1388,10 +1406,10 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 font-bold flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-                  ● {isZh ? '实时流向追踪' : 'REAL-TIME FLOW TRACE'}
+                  ● {isZh ? '流程演练' : 'FLOW SIMULATION'}
                 </span>
                 <span className="text-slate-400 uppercase tracking-wider hidden md:inline">
-                  {isZh ? '逐级顺序光流流转 · 动态数据包载荷穿透' : 'SEQUENTIAL OPTICAL PACKET PROPAGATION'}
+                  {isZh ? '智能体执行路径' : 'AGENT EXECUTION PATH'}
                 </span>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -1480,7 +1498,7 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-500 text-black flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-black animate-ping" />
-                    {isZh ? '正在流向' : 'STREAMING'}
+                    {isZh ? '当前阶段' : 'CURRENT STAGE'}
                   </span>
                   <div className="flex items-center gap-1.5 text-xs font-bold">
                     <span className="text-cyan-300">{isZh ? currentFlow.fromZh : currentFlow.fromEn}</span>
@@ -1550,43 +1568,15 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   transformOrigin: 'top center',
                   transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
                 }}
-                className="relative min-w-[1080px] w-full aspect-[1600/780] overflow-hidden"
+                className="relative min-w-[1080px] w-full aspect-[1600/1260] overflow-hidden"
               >
-                {/* Floating On-Canvas Model Display HUD */}
-                <div className="absolute top-2.5 right-3 z-30 hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#040814]/90 border border-purple-500/50 text-[10px] font-mono text-slate-300 backdrop-blur-md shadow-[0_0_15px_rgba(168,85,247,0.25)]">
-                  <div className="flex items-center gap-1.5">
-                    <Cpu className="w-3.5 h-3.5 text-purple-400 animate-pulse" />
-                    <span className="font-bold text-slate-100">{currentModel.name}</span>
-                  </div>
-                  <span className="text-slate-600">|</span>
-                  <span className="text-emerald-400 font-bold">{currentModel.tps} TPS</span>
-                  <span className="text-slate-600">|</span>
-                  <span className="text-cyan-300 font-bold">{currentModel.ttftMs}ms</span>
-                  {thinkingEnabled && currentModel.thinkingSupported && (
-                    <>
-                      <span className="text-slate-600">|</span>
-                      <span className="text-amber-300 font-bold">思考: {(thinkingBudget / 1024).toFixed(0)}K</span>
-                    </>
-                  )}
-                  <button
-                    onClick={() => {
-                      soundFx.playKeyClick();
-                      setShowModelModal(true);
-                    }}
-                    className="ml-1 px-1.5 py-0.5 rounded bg-purple-950 hover:bg-purple-900 text-purple-200 border border-purple-600 font-bold cursor-pointer transition text-[9px] flex items-center gap-1 shadow-sm"
-                  >
-                    <span>{isZh ? '模型显示' : 'Model'}</span>
-                    <span>↗</span>
-                  </button>
-                </div>
-
                 {/* Layer 1: Background Canvas for floating particles and photon rays */}
-                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none z-0" />
+                <div className="absolute inset-0 pointer-events-none z-0 bg-[radial-gradient(ellipse_at_50%_45%,rgba(8,28,45,0.55),transparent_72%)]" />
 
                 {/* Layer 2: Vector SVG Circuit Traces & Glow Paths */}
                 <svg
                   className="absolute inset-0 w-full h-full pointer-events-none z-10"
-                  viewBox="0 0 1600 780"
+                  viewBox={`0 0 ${FLOW_WIDTH} ${FLOW_HEIGHT}`}
                   preserveAspectRatio="xMidYMid meet"
                 >
                   <defs>
@@ -1705,6 +1695,7 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                       <path d="M 1 2 L 11 6 L 1 10 z" fill="rgba(71, 85, 105, 0.4)" />
                     </marker>
                   </defs>
+                  <g style={{ display: 'none' }}>
 
                   {/* =========================================================
                       STATE-AWARE REAL-TIME CONDUITS (DORMANT vs ACTIVE vs COMPLETED)
@@ -1714,22 +1705,22 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   <g className="flow-conduit-1">
                     {activeStep === 1 ? (
                       <>
-                        <path d="M 185 141 L 185 155" fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
-                        <path d="M 185 141 L 185 155" fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
+                        <path d={spinePaths.input} fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
+                        <path d={spinePaths.input} fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
                         <circle r="4.5" fill="#ffffff" filter="url(#neon-cyan)">
-                          <animateMotion dur="0.6s" repeatCount="indefinite" path="M 185 141 L 185 155" />
+                          <animateMotion dur="0.6s" repeatCount="indefinite" path={spinePaths.input} />
                         </circle>
                         {/* Flying Data Packet Capsule */}
                         <g>
                           <rect x="-32" y="-8" width="64" height="16" rx="4" fill="#040914" stroke="#00f0ff" strokeWidth="1.2" filter="url(#neon-cyan)" />
                           <text x="0" y="3" textAnchor="middle" fill="#00f0ff" fontSize="7.5" fontFamily="monospace" fontWeight="bold">PROMPT [38T]</text>
-                          <animateMotion dur="0.8s" repeatCount="indefinite" path="M 185 141 L 185 155" />
+                          <animateMotion dur="0.8s" repeatCount="indefinite" path={spinePaths.input} />
                         </g>
                       </>
                     ) : activeStep > 1 ? (
-                      <path d="M 185 141 L 185 155" fill="none" stroke="rgba(0, 240, 255, 0.45)" strokeWidth="2" markerEnd="url(#cyan-arrow)" />
+                      <path d={spinePaths.input} fill="none" stroke="rgba(0, 240, 255, 0.45)" strokeWidth="2" markerEnd="url(#cyan-arrow)" />
                     ) : (
-                      <path d="M 185 141 L 185 155" fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
+                      <path d={spinePaths.input} fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
                     )}
                   </g>
 
@@ -1829,21 +1820,21 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   <g className="flow-conduit-fusion-to-model">
                     {activeStep === 4 ? (
                       <>
-                        <path d="M 565 165 L 565 185" fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
-                        <path d="M 565 165 L 565 185" fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
+                        <path d={spinePaths.fusion} fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
+                        <path d={spinePaths.fusion} fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
                         <circle r="4.5" fill="#ffffff" filter="url(#neon-cyan)">
-                          <animateMotion dur="0.6s" repeatCount="indefinite" path="M 565 165 L 565 185" />
+                          <animateMotion dur="0.6s" repeatCount="indefinite" path={spinePaths.fusion} />
                         </circle>
                         <g>
                           <rect x="-35" y="-8" width="70" height="16" rx="4" fill="#040914" stroke="#00f0ff" strokeWidth="1.2" filter="url(#neon-cyan)" />
                           <text x="0" y="3" textAnchor="middle" fill="#00f0ff" fontSize="7.5" fontFamily="monospace" fontWeight="bold">SYNTHESIS [4.9K]</text>
-                          <animateMotion dur="0.8s" repeatCount="indefinite" path="M 565 165 L 565 185" />
+                          <animateMotion dur="0.8s" repeatCount="indefinite" path={spinePaths.fusion} />
                         </g>
                       </>
                     ) : activeStep > 4 ? (
-                      <path d="M 565 165 L 565 185" fill="none" stroke="rgba(0, 240, 255, 0.45)" strokeWidth="2" markerEnd="url(#cyan-arrow)" />
+                      <path d={spinePaths.fusion} fill="none" stroke="rgba(0, 240, 255, 0.45)" strokeWidth="2" markerEnd="url(#cyan-arrow)" />
                     ) : (
-                      <path d="M 565 165 L 565 185" fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
+                      <path d={spinePaths.fusion} fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
                     )}
                   </g>
 
@@ -1851,21 +1842,21 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   <g className="flow-conduit-model-to-orch">
                     {activeStep === 5 ? (
                       <>
-                        <path d="M 565 375 L 565 395" fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
-                        <path d="M 565 375 L 565 395" fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
+                        <path d={spinePaths.model} fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
+                        <path d={spinePaths.model} fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
                         <circle r="4.5" fill="#ffffff" filter="url(#neon-cyan)">
-                          <animateMotion dur="0.6s" repeatCount="indefinite" path="M 565 375 L 565 395" />
+                          <animateMotion dur="0.6s" repeatCount="indefinite" path={spinePaths.model} />
                         </circle>
                         <g>
                           <rect x="-35" y="-8" width="70" height="16" rx="4" fill="#040914" stroke="#00f0ff" strokeWidth="1.2" filter="url(#neon-cyan)" />
                           <text x="0" y="3" textAnchor="middle" fill="#00f0ff" fontSize="7.5" fontFamily="monospace" fontWeight="bold">TOOL CALL [Intent]</text>
-                          <animateMotion dur="0.8s" repeatCount="indefinite" path="M 565 375 L 565 395" />
+                          <animateMotion dur="0.8s" repeatCount="indefinite" path={spinePaths.model} />
                         </g>
                       </>
                     ) : activeStep > 5 ? (
-                      <path d="M 565 375 L 565 395" fill="none" stroke="rgba(0, 240, 255, 0.45)" strokeWidth="2" markerEnd="url(#cyan-arrow)" />
+                      <path d={spinePaths.model} fill="none" stroke="rgba(0, 240, 255, 0.45)" strokeWidth="2" markerEnd="url(#cyan-arrow)" />
                     ) : (
-                      <path d="M 565 375 L 565 395" fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
+                      <path d={spinePaths.model} fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
                     )}
                   </g>
 
@@ -1998,16 +1989,16 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   <g className="flow-conduit-hooks">
                     {activeStep === 8 ? (
                       <>
-                        <path d="M 972 355 L 972 375" fill="none" stroke="rgba(245, 158, 11, 0.3)" strokeWidth="3.5" />
-                        <path d="M 972 355 L 972 375" fill="none" stroke="#f59e0b" strokeWidth="3" className="stream-active-amber" markerEnd="url(#amber-arrow)" />
+                        <path d={spinePaths.tools} fill="none" stroke="rgba(245, 158, 11, 0.3)" strokeWidth="3.5" />
+                        <path d={spinePaths.tools} fill="none" stroke="#f59e0b" strokeWidth="3" className="stream-active-amber" markerEnd="url(#amber-arrow)" />
                         <circle r="4.5" fill="#ffffff" filter="url(#neon-amber)">
-                          <animateMotion dur="0.6s" repeatCount="indefinite" path="M 972 355 L 972 375" />
+                          <animateMotion dur="0.6s" repeatCount="indefinite" path={spinePaths.tools} />
                         </circle>
                       </>
                     ) : activeStep > 8 ? (
-                      <path d="M 972 355 L 972 375" fill="none" stroke="rgba(245, 158, 11, 0.45)" strokeWidth="1.8" markerEnd="url(#amber-arrow)" />
+                      <path d={spinePaths.tools} fill="none" stroke="rgba(245, 158, 11, 0.45)" strokeWidth="1.8" markerEnd="url(#amber-arrow)" />
                     ) : (
-                      <path d="M 972 355 L 972 375" fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
+                      <path d={spinePaths.tools} fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
                     )}
                   </g>
 
@@ -2015,21 +2006,21 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   <g className="flow-conduit-gate">
                     {activeStep === 8 ? (
                       <>
-                        <path d="M 972 465 L 972 480" fill="none" stroke="rgba(245, 158, 11, 0.3)" strokeWidth="3.5" />
-                        <path d="M 972 465 L 972 480" fill="none" stroke="#f59e0b" strokeWidth="3" className="stream-active-amber" markerEnd="url(#amber-arrow)" />
+                        <path d={spinePaths.hooks} fill="none" stroke="rgba(245, 158, 11, 0.3)" strokeWidth="3.5" />
+                        <path d={spinePaths.hooks} fill="none" stroke="#f59e0b" strokeWidth="3" className="stream-active-amber" markerEnd="url(#amber-arrow)" />
                         <circle r="4.5" fill="#ffffff" filter="url(#neon-amber)">
-                          <animateMotion dur="0.5s" repeatCount="indefinite" path="M 972 465 L 972 480" />
+                          <animateMotion dur="0.5s" repeatCount="indefinite" path={spinePaths.hooks} />
                         </circle>
                         <g>
                           <rect x="-26" y="-8" width="52" height="16" rx="4" fill="#1c0f04" stroke="#f59e0b" strokeWidth="1.2" filter="url(#neon-amber)" />
                           <text x="0" y="3" textAnchor="middle" fill="#f59e0b" fontSize="7" fontFamily="monospace" fontWeight="bold">AUDIT</text>
-                          <animateMotion dur="0.7s" repeatCount="indefinite" path="M 972 465 L 972 480" />
+                          <animateMotion dur="0.7s" repeatCount="indefinite" path={spinePaths.hooks} />
                         </g>
                       </>
                     ) : activeStep > 8 ? (
-                      <path d="M 972 465 L 972 480" fill="none" stroke="rgba(245, 158, 11, 0.45)" strokeWidth="1.8" markerEnd="url(#amber-arrow)" />
+                      <path d={spinePaths.hooks} fill="none" stroke="rgba(245, 158, 11, 0.45)" strokeWidth="1.8" markerEnd="url(#amber-arrow)" />
                     ) : (
-                      <path d="M 972 465 L 972 480" fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
+                      <path d={spinePaths.hooks} fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
                     )}
                   </g>
 
@@ -2097,21 +2088,21 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   <g className="flow-conduit-obs-to-loop">
                     {activeStep === 9 ? (
                       <>
-                        <path d="M 1380 170 L 1380 195" fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
-                        <path d="M 1380 170 L 1380 195" fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
+                        <path d={spinePaths.observation} fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
+                        <path d={spinePaths.observation} fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
                         <circle r="4.5" fill="#ffffff" filter="url(#neon-cyan)">
-                          <animateMotion dur="0.5s" repeatCount="indefinite" path="M 1380 170 L 1380 195" />
+                          <animateMotion dur="0.5s" repeatCount="indefinite" path={spinePaths.observation} />
                         </circle>
                         <g>
                           <rect x="-32" y="-8" width="64" height="16" rx="4" fill="#040914" stroke="#00f0ff" strokeWidth="1.2" filter="url(#neon-cyan)" />
                           <text x="0" y="3" textAnchor="middle" fill="#00f0ff" fontSize="7.5" fontFamily="monospace" fontWeight="bold">EVALUATE</text>
-                          <animateMotion dur="0.7s" repeatCount="indefinite" path="M 1380 170 L 1380 195" />
+                          <animateMotion dur="0.7s" repeatCount="indefinite" path={spinePaths.observation} />
                         </g>
                       </>
                     ) : activeStep > 9 ? (
-                      <path d="M 1380 170 L 1380 195" fill="none" stroke="rgba(0, 240, 255, 0.45)" strokeWidth="2" markerEnd="url(#cyan-arrow)" />
+                      <path d={spinePaths.observation} fill="none" stroke="rgba(0, 240, 255, 0.45)" strokeWidth="2" markerEnd="url(#cyan-arrow)" />
                     ) : (
-                      <path d="M 1380 170 L 1380 195" fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
+                      <path d={spinePaths.observation} fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
                     )}
                   </g>
 
@@ -2148,7 +2139,7 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                     )}
                     <text
                       x="1050"
-                      y="20"
+                      y="8"
                       fill={loopbackActive || activeStep === 10 ? '#00f0ff' : 'rgba(100, 116, 139, 0.6)'}
                       fontSize="9.5"
                       fontFamily="monospace"
@@ -2162,19 +2153,19 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   <g className="flow-conduit-loop-to-finalize">
                     {activeStep === 11 ? (
                       <>
-                        <path d="M 1380 310 L 1380 335" fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
-                        <path d="M 1380 310 L 1380 335" fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
+                        <path d={spinePaths.finalize} fill="none" stroke="rgba(0, 240, 255, 0.3)" strokeWidth="3.5" />
+                        <path d={spinePaths.finalize} fill="none" stroke="#00f0ff" strokeWidth="3" className="stream-active-laser" markerEnd="url(#cyan-arrow)" />
                         <circle r="4.5" fill="#ffffff" filter="url(#neon-cyan)">
-                          <animateMotion dur="0.5s" repeatCount="indefinite" path="M 1380 310 L 1380 335" />
+                          <animateMotion dur="0.5s" repeatCount="indefinite" path={spinePaths.finalize} />
                         </circle>
                         <g>
                           <rect x="-30" y="-8" width="60" height="16" rx="4" fill="#040914" stroke="#00f0ff" strokeWidth="1.2" filter="url(#neon-cyan)" />
                           <text x="0" y="3" textAnchor="middle" fill="#00f0ff" fontSize="7" fontFamily="monospace" fontWeight="bold">FINALIZE</text>
-                          <animateMotion dur="0.7s" repeatCount="indefinite" path="M 1380 310 L 1380 335" />
+                          <animateMotion dur="0.7s" repeatCount="indefinite" path={spinePaths.finalize} />
                         </g>
                       </>
                     ) : (
-                      <path d="M 1380 310 L 1380 335" fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
+                      <path d={spinePaths.finalize} fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
                     )}
                   </g>
 
@@ -2182,60 +2173,91 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                   <g className="flow-conduit-finalize-to-output">
                     {activeStep === 11 ? (
                       <>
-                        <path d="M 1380 440 L 1380 465" fill="none" stroke="rgba(16, 185, 129, 0.3)" strokeWidth="3.5" />
-                        <path d="M 1380 440 L 1380 465" fill="none" stroke="#10b981" strokeWidth="3" className="stream-active-emerald" markerEnd="url(#emerald-arrow)" />
+                        <path d={spinePaths.delivery} fill="none" stroke="rgba(16, 185, 129, 0.3)" strokeWidth="3.5" />
+                        <path d={spinePaths.delivery} fill="none" stroke="#10b981" strokeWidth="3" className="stream-active-emerald" markerEnd="url(#emerald-arrow)" />
                         <circle r="4.5" fill="#ffffff" filter="url(#neon-emerald)">
-                          <animateMotion dur="0.5s" repeatCount="indefinite" path="M 1380 440 L 1380 465" />
+                          <animateMotion dur="0.5s" repeatCount="indefinite" path={spinePaths.delivery} />
                         </circle>
                         <g>
                           <rect x="-32" y="-8" width="64" height="16" rx="4" fill="#02160d" stroke="#10b981" strokeWidth="1.2" filter="url(#neon-emerald)" />
                           <text x="0" y="3" textAnchor="middle" fill="#10b981" fontSize="7" fontFamily="monospace" fontWeight="bold">DELIVERY ↗</text>
-                          <animateMotion dur="0.7s" repeatCount="indefinite" path="M 1380 440 L 1380 465" />
+                          <animateMotion dur="0.7s" repeatCount="indefinite" path={spinePaths.delivery} />
                         </g>
                       </>
                     ) : (
-                      <path d="M 1380 440 L 1380 465" fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
+                      <path d={spinePaths.delivery} fill="none" stroke="rgba(71, 85, 105, 0.25)" strokeWidth="1.2" strokeDasharray="3 3" markerEnd="url(#dormant-arrow)" />
                     )}
+                  </g>
+                  </g>
+                  <g>
+                    {flowConnections.map((connection) => {
+                      const isActive = activeStep === connection.step;
+                      const isPast = activeStep > connection.step;
+                      const stroke = connection.color === 'purple' ? '#c084fc'
+                        : connection.color === 'amber' ? (isSimulatingBlocked ? '#fb7185' : '#fbbf24')
+                        : connection.color === 'emerald' ? '#34d399'
+                        : connection.color === 'sky' ? '#38bdf8'
+                        : '#22d3ee';
+                      const marker = connection.color === 'purple' ? 'purple-arrow'
+                        : connection.color === 'amber' ? (isSimulatingBlocked ? 'rose-arrow' : 'amber-arrow')
+                        : connection.color === 'emerald' ? 'emerald-arrow'
+                        : 'cyan-arrow';
+                      return (
+                        <g key={connection.id}>
+                          <path
+                            d={connection.path}
+                            fill="none"
+                            stroke={stroke}
+                            strokeOpacity={isActive ? 0.9 : isPast ? 0.4 : 0.18}
+                            strokeWidth={isActive ? 2.5 : 1.35}
+                            strokeDasharray={isActive ? '7 5' : undefined}
+                            markerEnd={`url(#${marker})`}
+                            className={isActive ? 'stream-active-laser' : undefined}
+                          />
+                          {isActive && (
+                            <circle r="4" fill="#fff" filter="url(#neon-cyan)">
+                              <animateMotion dur={`${1.15 / traceSpeed}s`} repeatCount="indefinite" path={connection.path} />
+                            </circle>
+                          )}
+                        </g>
+                      );
+                    })}
                   </g>
                 </svg>
 
-                {/* 4 Architectural Phase Header Banners across 1600x780 Canvas */}
+                {/* Four phase lanes share the expanded 1600 x 1100 canvas. */}
                 <div
-                  style={{ left: `${(40 / 1600) * 100}%`, top: `${(16 / 780) * 100}%`, width: `${(290 / 1600) * 100}%` }}
-                  className="absolute pointer-events-none flex items-center justify-between px-2.5 py-1 rounded bg-cyan-950/50 border border-cyan-800/50 text-[10px] font-mono font-bold text-cyan-300 backdrop-blur-sm"
+                  style={{ left: `${(620 / FLOW_WIDTH) * 100}%`, top: `${(20 / FLOW_HEIGHT) * 100}%`, width: `${(360 / FLOW_WIDTH) * 100}%` }}
+                  className="absolute pointer-events-none flex items-center justify-between gap-2 whitespace-nowrap px-2.5 py-1 rounded bg-cyan-950/50 border border-cyan-800/50 text-[10px] font-mono font-bold text-cyan-300 backdrop-blur-sm"
                 >
-                  <span>PHASE 01 // 摄取与环境</span>
-                  <span className="text-[8.5px] text-cyan-400/80">INGESTION</span>
+                  <span>{isZh ? '执行主链' : 'EXECUTION SPINE'}</span>
                 </div>
 
                 <div
-                  style={{ left: `${(390 / 1600) * 100}%`, top: `${(16 / 780) * 100}%`, width: `${(350 / 1600) * 100}%` }}
-                  className="absolute pointer-events-none flex items-center justify-between px-2.5 py-1 rounded bg-purple-950/50 border border-purple-800/50 text-[10px] font-mono font-bold text-purple-300 backdrop-blur-sm"
+                  style={{ left: `${(32 / FLOW_WIDTH) * 100}%`, top: `${(208 / FLOW_HEIGHT) * 100}%`, width: `${(264 / FLOW_WIDTH) * 100}%` }}
+                  className="absolute pointer-events-none flex items-center justify-between gap-2 whitespace-nowrap px-2.5 py-1 rounded bg-purple-950/50 border border-purple-800/50 text-[10px] font-mono font-bold text-purple-300 backdrop-blur-sm"
                 >
-                  <span>PHASE 02 // 认知推理中枢</span>
-                  <span className="text-[8.5px] text-purple-400/80">REASONING CORE</span>
+                  <span>{isZh ? '上下文输入' : 'CONTEXT INPUTS'}</span>
                 </div>
 
                 <div
-                  style={{ left: `${(805 / 1600) * 100}%`, top: `${(16 / 780) * 100}%`, width: `${(335 / 1600) * 100}%` }}
-                  className="absolute pointer-events-none flex items-center justify-between px-2.5 py-1 rounded bg-amber-950/50 border border-amber-800/50 text-[10px] font-mono font-bold text-amber-300 backdrop-blur-sm"
+                  style={{ left: `${(356 / FLOW_WIDTH) * 100}%`, top: `${(714 / FLOW_HEIGHT) * 100}%`, width: `${(780 / FLOW_WIDTH) * 100}%` }}
+                  className="absolute pointer-events-none flex items-center justify-between gap-2 whitespace-nowrap px-2.5 py-1 rounded bg-amber-950/50 border border-amber-800/50 text-[10px] font-mono font-bold text-amber-300 backdrop-blur-sm"
                 >
-                  <span>PHASE 03 // 工具矩阵与门禁</span>
-                  <span className="text-[8.5px] text-amber-400/80">CAPABILITIES & POLICY</span>
+                  <span>{isZh ? '能力分发' : 'CAPABILITY ROUTING'}</span>
                 </div>
 
                 <div
-                  style={{ left: `${(1205 / 1600) * 100}%`, top: `${(16 / 780) * 100}%`, width: `${(350 / 1600) * 100}%` }}
-                  className="absolute pointer-events-none flex items-center justify-between px-2.5 py-1 rounded bg-emerald-950/50 border border-emerald-800/50 text-[10px] font-mono font-bold text-emerald-300 backdrop-blur-sm"
+                  style={{ left: `${(1234 / FLOW_WIDTH) * 100}%`, top: `${(714 / FLOW_HEIGHT) * 100}%`, width: `${(300 / FLOW_WIDTH) * 100}%` }}
+                  className="absolute pointer-events-none flex items-center justify-between gap-2 whitespace-nowrap px-2.5 py-1 rounded bg-emerald-950/50 border border-emerald-800/50 text-[10px] font-mono font-bold text-emerald-300 backdrop-blur-sm"
                 >
-                  <span>PHASE 04 // 观测与产物交付</span>
-                  <span className="text-[8.5px] text-emerald-400/80">OBSERVATION & OUTPUT</span>
+                  <span>{isZh ? '策略门禁' : 'POLICY GATES'}</span>
                 </div>
 
                 {/* Bottom Concurrency & Runtime Bus Live Strip */}
                 <div
                   style={{ left: `${(40 / 1600) * 100}%`, top: `${(600 / 780) * 100}%`, width: `${(1515 / 1600) * 100}%`, height: `${(160 / 780) * 100}%` }}
-                  className="absolute rounded-xl border border-cyan-900/60 bg-[#040816]/90 p-3 backdrop-blur-md flex flex-col justify-between text-xs font-mono"
+                  className="hidden"
                 >
                   <div className="flex items-center justify-between border-b border-cyan-950/80 pb-1.5">
                     <div className="flex items-center gap-2">
@@ -2275,7 +2297,7 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                 </div>
 
                 {/* Layer 3: Interactive DOM Nodes Placed via Strict Percentage Coordinates */}
-                {nodes.map((node) => {
+                {layoutNodes.map((node) => {
                   const isSelected = selectedNodeId === node.id;
                   const isHovered = hoveredNodeId === node.id;
                   const isCurrentTraceStep =
@@ -2335,10 +2357,10 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                       onMouseLeave={() => setHoveredNodeId(null)}
                       style={{
                         position: 'absolute',
-                        left: `${(node.x / 1600) * 100}%`,
-                        top: `${(node.y / 780) * 100}%`,
-                        width: `${(node.w / 1600) * 100}%`,
-                        height: `${(node.h / 780) * 100}%`,
+                        left: `${(node.x / FLOW_WIDTH) * 100}%`,
+                        top: `${(node.y / FLOW_HEIGHT) * 100}%`,
+                        width: `${(node.w / FLOW_WIDTH) * 100}%`,
+                        height: `${(node.h / FLOW_HEIGHT) * 100}%`,
                       }}
                       className={`z-20 rounded-lg px-2.5 py-1.5 flex flex-col justify-between border transition-all duration-300 cursor-pointer overflow-hidden ${borderClass} ${
                         isSelected || isCurrentTraceStep
@@ -2403,23 +2425,6 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
             </div>
           </div>
         </div>
-
-        {/* Floating Re-Open Inspector Tab when collapsed or when in fullscreen */}
-        {(!showInspector || isFullscreen) && (
-          <button
-            onClick={() => {
-              soundFx.playKeyClick();
-              setShowInspector((prev) => !prev);
-            }}
-            className={`fixed md:absolute right-4 ${
-              isFullscreen ? 'top-16 z-50' : 'top-1/2 -translate-y-1/2 z-30'
-            } bg-[#040a18]/95 hover:bg-cyan-950 border border-cyan-500/60 text-cyan-300 px-3 py-1.5 rounded-lg text-[11px] font-mono font-bold cursor-pointer shadow-[0_0_20px_rgba(0,240,255,0.35)] transition flex items-center gap-1.5 hover:text-white`}
-            title={isZh ? '展开/收起检查器侧栏 (快捷键: I)' : 'Toggle Inspector Panel (Key: I)'}
-          >
-            <span>{showInspector ? '✕' : 'ℹ️'}</span>
-            <span>{isZh ? (showInspector ? '收起检查器' : '节点检查器') : (showInspector ? 'Close Panel' : 'Inspector')}</span>
-          </button>
-        )}
 
         {/* ================= RIGHT: TRACE INSPECTOR & TELEMETRY ================= */}
         {showInspector && (
