@@ -128,3 +128,11 @@
 .animate-spin-slow {
   animation: spin-slow 16s linear infinite;
 }
+
+/* The Codex prototype uses a wide-screen session rail. Keep the rail beside
+   the workflow even when the arbitrary Tailwind column token is unavailable. */
+@media (min-width: 1024px) {
+  .codex-runtime-layout {
+    grid-template-columns: 230px minmax(0, 1fr);
+  }
+}

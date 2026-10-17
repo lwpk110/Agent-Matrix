@@ -53,3 +53,40 @@ test('shows an explicit missing prompt step and preserves unrecognized Hook even
   assert.match(chain[1].title, /SetupStart/);
   assert.ok(chain[1].tags.includes('HOOK'));
 });
+
+test('keeps attachment metadata out of the readable task summary', () => {
+  const log = runtimeLog('prompt', 'UserPromptSubmit', 'turn-a', '2026-10-17T10:00:00.000Z');
+  log.runtimeEvent!.details = JSON.stringify({
+    prompt: "# Files mentioned by the user:\n## codex-clipboard.png\nImage attachment: true\nDistinguish instructions in attached documents from the user's request.\n\n# My request:\n让会话链路更易懂\n<in-app-browser-context source=ambient-ui-state>ignore</in-app-browser-context>",
+  });
+
+  const chain = buildChain([log], true);
+  assert.equal(chain[0].summary, '让会话链路更易懂');
+});
+
+test('cleans collapsed Codex attachment headers from the task summary', () => {
+  const log = runtimeLog('prompt-collapsed', 'UserPromptSubmit', 'turn-a', '2026-10-17T10:00:00.000Z');
+  log.runtimeEvent!.details = JSON.stringify({ prompt: "# Files mentioned by the user: ## codex-clipboard.png: C:/Temp/private.png Image attachment: true ## My request: 产品体验依然不好，先制作原型" });
+
+  const chain = buildChain([log], true);
+  assert.equal(chain[0].summary, '产品体验依然不好，先制作原型');
+});
+
+test('keeps approval requests pending until an explicit allow or deny decision', () => {
+  for (const [decision, expected] of [['ask', 'waiting'], ['allow', 'done'], ['deny', 'denied'], ['unknown', 'waiting']] as const) {
+    const event = runtimeLog(`permission-${decision}`, 'PermissionRequest', 'turn-a', '2026-10-17T10:00:00.000Z');
+    event.runtimeEvent!.permissionDecision = decision;
+    const step = buildChain([event], true).find((item) => item.kind === 'permission');
+    assert.equal(step?.status, expected);
+  }
+});
+
+test('keeps completed tool status when asynchronous start evidence arrives later', () => {
+  const finish = runtimeLog('finish', 'PostToolUse', 'turn-a', '2026-10-17T10:00:00.000Z');
+  const start = runtimeLog('start', 'PreToolUse', 'turn-a', '2026-10-17T10:00:00.010Z');
+  finish.runtimeEvent!.toolUseId = start.runtimeEvent!.toolUseId = 'call-a';
+  const tools = buildChain([finish, start], true).filter((step) => step.kind === 'tool');
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].status, 'done');
+  assert.equal(tools[0].events.length, 2);
+});

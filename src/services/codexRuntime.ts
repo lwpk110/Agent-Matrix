@@ -15,6 +15,7 @@ const SECRET_PATTERNS = [
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,
   /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)\s*[:=]\s*["']?[^\s"']{8,}/gi,
 ];
+const SENSITIVE_FIELD = /^(?:(?:.+[_-])?)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|password|passwd|authorization|auth[_-]?header|cookie|set[_-]?cookie|credential|credentials|private[_-]?key)$/i;
 
 export function redactRuntimeText(value: string): string {
   const redacted = SECRET_PATTERNS.reduce((text, pattern) => text.replace(pattern, (...matches: unknown[]) => {
@@ -31,9 +32,9 @@ function sanitizeValue(value: unknown, depth = 0): unknown {
   if (!value || typeof value !== 'object') return value;
 
   return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .filter(([key]) => !/transcript_path|rollout_path|api.?key|secret|password|authorization/i.test(key))
+    .filter(([key]) => !/transcript_path|rollout_path/i.test(key))
     .slice(0, 60)
-    .map(([key, item]) => [key, sanitizeValue(item, depth + 1)]));
+    .map(([key, item]) => [key, SENSITIVE_FIELD.test(key) || /api.?key|secret|password|authorization/i.test(key) ? '[REDACTED]' : sanitizeValue(item, depth + 1)]));
 }
 
 export interface CodexRuntimeEvent {

@@ -33,6 +33,7 @@ import { MultiSessionFleetGrid } from './components/MultiSessionFleetGrid';
 import { Agent3dArchitectureTopology } from './components/Agent3dArchitectureTopology';
 import { CodexRuntimePage } from './components/CodexRuntimePage';
 import { telemetryBus } from './services/websocket';
+import { appendRuntimeLog, pairRuntimeLogs } from './services/runtimeLogBuffer';
 import { soundFx } from './utils/audio';
 import { generate60mHistory } from './utils/finOpsHistory';
 import { BlackBoxStage } from './types/matrix';
@@ -435,8 +436,7 @@ export default function App() {
       id: 'log-' + Math.random().toString(36).substr(2, 9),
       timestamp: timeStr,
     };
-    // Keep enough room for the gateway's 500-event Codex replay plus local status entries.
-    setLogs((prev) => [...prev.slice(-119), newEntry]);
+    setLogs((prev) => appendRuntimeLog(prev, newEntry));
     if (!options.silent) {
       if (entry.riskLevel === 'critical' || entry.category === 'hitl') {
         soundFx.playAlert();
@@ -653,19 +653,8 @@ export default function App() {
           }
         }
         if ((runtimeEvent.phase === 'started' || runtimeEvent.phase === 'completed') && runtimeEvent.toolUseId) {
-          setLogs((current) => current.map((log) => {
-            const counterpart = log.runtimeEvent;
-            if (!counterpart || counterpart.toolUseId !== runtimeEvent.toolUseId || counterpart.phase === runtimeEvent.phase) return log;
-            if (runtimeEvent.correlationStatus !== 'paired' && counterpart.correlationStatus !== 'paired') return log;
-            return {
-              ...log,
-              runtimeEvent: {
-                ...counterpart,
-                correlationStatus: 'paired',
-                pairedEventId: runtimeEvent.eventId || runtimeEvent.pairedEventId || counterpart.pairedEventId,
-                observedIntervalMs: runtimeEvent.observedIntervalMs ?? counterpart.observedIntervalMs,
-              },
-            };
+          setLogs((current) => pairRuntimeLogs(current, {
+            ...runtimeEvent, eventId: runtimeEvent.eventId || '', eventName: hookEventName, details: '',
           }));
         }
         const stage: BlackBoxStage = hookEventName === 'PermissionRequest'

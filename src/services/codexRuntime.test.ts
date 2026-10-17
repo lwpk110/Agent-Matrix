@@ -145,6 +145,29 @@ test('redacts common credentials and excludes transcript file locations', () => 
   assert.equal(redactRuntimeText('token=sk-123456789012345678901234'), 'token=[REDACTED]');
 });
 
+test('redacts credential values in nested structured hook fields', () => {
+  const event = normalizeCodexHookPayload({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    tool_input: {
+      token: 'plain-token-value',
+      refresh_token: 'refresh-token-value',
+      apiKey: 'api-key-value',
+      Authorization: 'Bearer opaque-value',
+      nested: { private_key: 'private-key-value', safe: 'visible' },
+    },
+  });
+
+  assert.ok(event);
+  assert.deepEqual(event.payload.tool_input, {
+    token: '[REDACTED]',
+    refresh_token: '[REDACTED]',
+    apiKey: '[REDACTED]',
+    Authorization: '[REDACTED]',
+    nested: { private_key: '[REDACTED]', safe: 'visible' },
+  });
+});
+
 test('rejects payloads without a Codex hook event name', () => {
   assert.equal(normalizeCodexHookPayload({ tool_name: 'Bash' }), null);
   assert.equal(normalizeCodexHookPayload(null), null);
