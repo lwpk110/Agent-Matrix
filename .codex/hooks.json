@@ -1,0 +1,41 @@
+{
+  "description": "Agent Matrix local Codex runtime telemetry. Review and trust these hooks with /hooks before they run.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "PreToolUse": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "PermissionRequest": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "PostCompact": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "SubagentStart": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "timeout": 2 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "Interrupt": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "async": true, "timeout": 3 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "commandWindows": "node -e \"const cp=require('node:child_process'),p=require('node:path'),u=require('node:url');import(u.pathToFileURL(p.join(cp.execFileSync('git',['rev-parse','--show-toplevel'],{encoding:'utf8'}).trim(),'.codex/hooks/codex-runtime-hook.mjs')))\"", "timeout": 2 }] }
+    ]
+  }
+}

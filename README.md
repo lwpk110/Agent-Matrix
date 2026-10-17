@@ -87,6 +87,12 @@ mkdir -p .claude && cat << 'EOF' > .claude/settings.json
 EOF
 ```
 
+### 方式 4：查看 Codex CLI 真实运行事件
+
+本仓库的 `.codex/hooks.json` 配置 Codex 官方生命周期 Hook。启动控制台后，在 Codex 中运行 `/hooks`，审核并信任 `Agent Matrix local Codex runtime telemetry`；Codex 只会在信任后向本地 `127.0.0.1:7789` 网关上报事件。Hook 覆盖提示提交、工具调用前后、权限请求、子 Agent、压缩与回合生命周期。
+
+打开 `/codex` 工作台查看实时事件、会话/回合关联和脱敏详情。事件只通过本机回环接口传输，不广播给局域网看板客户端，服务端会为重连中的本地看板保留最近 500 条事件，并将脱敏事件追加到 `.codex/runtime-events.jsonl` 以便服务重启后恢复。MCP 及其他本地工具调用会按 Hook 实际上报展示；Codex 托管的 `WebSearch` 不经过本地工具 Hook，当前不会被采集。Skills 也没有独立的激活事件，只有 Hook 可见的明确技能元数据才会出现。Codex 不提供完整组装后的隐藏系统上下文或模型私有推理链；这些细节不会伪装成实时数据。
+
 ---
 
 ## ⌨️ 控制台交互命令行 (CLI Cheatsheet)

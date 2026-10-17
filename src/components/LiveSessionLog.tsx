@@ -199,6 +199,17 @@ export const LiveSessionLog: React.FC<LiveSessionLogProps> = ({
                   </div>
                 </div>
               )}
+
+              {log.runtimeEvent && (
+                <details className="mt-1.5 border-t border-slate-800/80 pt-1.5 text-[10px]">
+                  <summary className="flex cursor-pointer list-none items-center gap-1.5 text-cyan-300">
+                    <span className="rounded border border-cyan-800/70 bg-cyan-950/50 px-1 py-0.5 font-bold">REAL RUNTIME</span>
+                    <span>{log.runtimeEvent.provider} · {log.runtimeEvent.eventName}</span>
+                    {log.runtimeEvent.sessionId && <span className="ml-auto text-slate-500">{log.runtimeEvent.sessionId.slice(0, 18)}</span>}
+                  </summary>
+                  <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/40 p-2 text-slate-300">{log.runtimeEvent.details}</pre>
+                </details>
+              )}
             </div>
           ))
         )}

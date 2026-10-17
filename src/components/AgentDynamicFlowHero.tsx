@@ -728,6 +728,7 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
 
     return { id: `${fromId}-${toId}`, fromId, toId, step, color, path };
   });
+  const activeConnection = flowConnections.find((connection) => connection.step === activeStep);
 
   // Active inspected node
   const activeNode = useMemo(() => {
@@ -2223,6 +2224,58 @@ export const AgentDynamicFlowHero: React.FC<AgentDynamicFlowHeroProps> = ({
                       );
                     })}
                   </g>
+                  {activeConnection && (
+                    <g className="flow-crawler" aria-label={isZh ? '沿当前流程移动的多足巡游虫' : 'Multi-legged trace crawler'}>
+                      <title>{isZh ? `巡游至：${layoutNodeById.get(activeConnection.toId)?.titleZh}` : `Crawling to ${layoutNodeById.get(activeConnection.toId)?.titleEn}`}</title>
+                      <g>
+                        <animateMotion
+                          dur={`${1.45 / traceSpeed}s`}
+                          repeatCount={isPlayingTrace ? 'indefinite' : '0'}
+                          rotate="auto"
+                          keyPoints="0.12;0.88"
+                          keyTimes="0;1"
+                          calcMode="linear"
+                          path={activeConnection.path}
+                        />
+                        <g filter="url(#neon-cyan)">
+                          {[[-9, -1], [-3, 1], [3, -1], [9, 1]].map(([x, phase], index) =>
+                            [-1, 1].map((side) => (
+                              <g key={`leg-${x}-${side}`} transform={`translate(${x} ${side * 3})`}>
+                                <g>
+                                  <path
+                                    d={`M 0 0 Q ${phase} ${side * 5}, ${-3 + phase} ${side * 9}`}
+                                    fill="none"
+                                    stroke="#e7fdff"
+                                    strokeWidth="1.35"
+                                    strokeLinecap="round"
+                                  />
+                                  <animateTransform
+                                    attributeName="transform"
+                                    type="rotate"
+                                    additive="sum"
+                                    values={`${side * 24} 0 0;${side * -22} 0 0;${side * 24} 0 0`}
+                                    dur={`${0.26 / traceSpeed}s`}
+                                    begin={`${(index * 0.035) + (side > 0 ? 0.13 : 0)}s`}
+                                    repeatCount={isPlayingTrace ? 'indefinite' : '0'}
+                                  />
+                                </g>
+                              </g>
+                            )),
+                          )}
+                          <path d="M -13 0 L -18 -1.5 M -13 2 L -17 4" fill="none" stroke="#76e7ff" strokeWidth="1.4" strokeLinecap="round" />
+                          <ellipse cx="0" cy="0" rx="13" ry="5.4" fill="#061d2a" stroke="#d8fbff" strokeWidth="1.2" />
+                          <path d="M -8 0 H 8" stroke="#49dfff" strokeWidth="1.8" strokeLinecap="round" />
+                          <circle cx="-6" cy="0" r="2.2" fill="#b7faff" />
+                          <circle cx="0" cy="0" r="2.8" fill="#f8ffff" />
+                          <circle cx="7" cy="0" r="2.3" fill="#b7faff" />
+                          <ellipse cx="15" cy="0" rx="4.5" ry="4" fill="#d9fdff" stroke="#fff" strokeWidth="1" />
+                          <circle cx="16.6" cy="-1" r="0.8" fill="#05202b" />
+                          <path d="M 17 -3 C 20 -8, 23 -8, 24 -11 M 18 -2 C 23 -5, 25 -4, 28 -6" fill="none" stroke="#e7fdff" strokeWidth="1.2" strokeLinecap="round" />
+                          <circle cx="0" cy="0" r="20" fill="none" stroke="#72ebff" strokeOpacity="0.2" strokeWidth="0.8" />
+                        </g>
+                      </g>
+                    </g>
+                  )}
                 </svg>
 
                 {/* Four phase lanes share the expanded 1600 x 1100 canvas. */}

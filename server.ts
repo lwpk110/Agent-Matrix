@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import child_process from 'child_process';
 import os from 'os';
 import fs from 'fs';
+import { CodexRuntimeEvent, correlateCodexRuntimeEvent, isLoopbackAddress, normalizeCodexHookPayload, reconcileCodexRuntimeHistory } from './src/services/codexRuntime';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,11 +43,81 @@ const SENSITIVE_PATTERNS = [
 
 const pendingApprovals = new Map<string, (decision: { action: string; prompt?: string }) => void>();
 let realEventsHistory: Array<any> = [];
+const CODEX_EVENT_HISTORY_LIMIT = 500;
+const CODEX_EVENT_JOURNAL_LIMIT_BYTES = 8 * 1024 * 1024;
+const CODEX_EVENT_JOURNAL_PATH = path.join(process.cwd(), '.codex', 'runtime-events.jsonl');
+let codexEventsHistory: CodexRuntimeEvent[] = loadCodexRuntimeHistory();
+const localWebSocketClients = new Set<WebSocket>();
+const CODEX_HOOK_PORT = Number(process.env.CODEX_HOOK_PORT) || 7789;
+let codexHookGatewayState: 'starting' | 'listening' | 'offline' = 'starting';
+
+function isCodexRuntimeEvent(value: unknown): value is CodexRuntimeEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const event = value as Partial<CodexRuntimeEvent>;
+  return event.provider === 'codex' && event.source === 'codex-hook' &&
+    typeof event.eventId === 'string' && typeof event.hookEventName === 'string' &&
+    typeof event.phase === 'string' && typeof event.timestamp === 'string' &&
+    !!event.payload && typeof event.payload === 'object';
+}
+
+function loadCodexRuntimeHistory(): CodexRuntimeEvent[] {
+  try {
+    if (!fs.existsSync(CODEX_EVENT_JOURNAL_PATH)) return [];
+    const lines = fs.readFileSync(CODEX_EVENT_JOURNAL_PATH, 'utf8').split(/\r?\n/).filter(Boolean);
+    const events = lines.flatMap((line) => {
+      try {
+        const parsed: unknown = JSON.parse(line);
+        return isCodexRuntimeEvent(parsed) ? [parsed] : [];
+      } catch {
+        return [];
+      }
+    });
+    return reconcileCodexRuntimeHistory(events.slice(-CODEX_EVENT_HISTORY_LIMIT));
+  } catch {
+    return [];
+  }
+}
+
+function persistCodexRuntimeEvent(event: CodexRuntimeEvent) {
+  try {
+    fs.mkdirSync(path.dirname(CODEX_EVENT_JOURNAL_PATH), { recursive: true });
+    fs.appendFileSync(CODEX_EVENT_JOURNAL_PATH, `${JSON.stringify(event)}\n`, 'utf8');
+    if (fs.statSync(CODEX_EVENT_JOURNAL_PATH).size > CODEX_EVENT_JOURNAL_LIMIT_BYTES) {
+      const compacted = codexEventsHistory.map((item) => JSON.stringify(item)).join('\n') + '\n';
+      fs.writeFileSync(CODEX_EVENT_JOURNAL_PATH, compacted, 'utf8');
+    }
+  } catch {
+    // Telemetry persistence is best-effort; the live gateway must remain available.
+  }
+}
+
+function registerLocalWebSocketClient(client: WebSocket) {
+  localWebSocketClients.add(client);
+  client.on('close', () => localWebSocketClients.delete(client));
+  client.on('error', () => localWebSocketClients.delete(client));
+
+  const socket = (client as WebSocket & { _socket?: { remoteAddress?: string } })._socket;
+  if (isLoopbackAddress(socket?.remoteAddress)) {
+    for (const event of codexEventsHistory) {
+      client.send(JSON.stringify({ type: 'codex_runtime', payload: event }));
+    }
+  }
+}
 
 function broadcast(msg: unknown) {
   const payload = JSON.stringify(msg);
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
+      client.send(payload);
+    }
+  });
+}
+
+function broadcastLocal(msg: unknown) {
+  const payload = JSON.stringify(msg);
+  localWebSocketClients.forEach((client) => {
+    const socket = (client as WebSocket & { _socket?: { remoteAddress?: string } })._socket;
+    if (client.readyState === WebSocket.OPEN && isLoopbackAddress(socket?.remoteAddress)) {
       client.send(payload);
     }
   });
@@ -95,6 +166,9 @@ function getRealSystemStatus() {
     uptimeSec: Math.round(process.uptime()),
     activeClientsCount: wss.clients.size,
     totalRealEvents: realEventsHistory.length,
+    totalCodexEvents: codexEventsHistory.length,
+    codexHookPort: CODEX_HOOK_PORT,
+    codexHookGatewayState,
     hasClaudeHooks: checkClaudeHooksConfigured(),
     timestamp: new Date().toISOString(),
   };
@@ -207,6 +281,7 @@ app.post('/api/real/setup-claude-hooks', (req, res) => {
 
 // WebSocket message handler
 wss.on('connection', (ws) => {
+  registerLocalWebSocketClient(ws);
   // Immediately send real initial status to client upon connection
   ws.send(JSON.stringify({
     type: 'system_status',
@@ -349,6 +424,41 @@ app.post('/hook/post', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
+app.post('/hook/codex', (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'Codex telemetry is restricted to localhost' });
+  }
+  const event = normalizeCodexHookPayload(req.body);
+  if (!event) return res.status(400).json({ error: 'Invalid Codex hook payload' });
+
+  const correlatedEvent = correlateCodexRuntimeEvent(event, codexEventsHistory);
+  codexEventsHistory.push(correlatedEvent);
+  if (codexEventsHistory.length > CODEX_EVENT_HISTORY_LIMIT) codexEventsHistory.shift();
+  persistCodexRuntimeEvent(correlatedEvent);
+  broadcastLocal({ type: 'codex_runtime', payload: correlatedEvent });
+  res.status(202).json({ status: 'accepted' });
+});
+
+app.get('/api/real/codex-events', (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'Codex telemetry is restricted to localhost' });
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ events: codexEventsHistory, retained: codexEventsHistory.length, journaled: true });
+});
+
+app.delete('/api/real/codex-events', (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'Codex telemetry is restricted to localhost' });
+  }
+  codexEventsHistory = [];
+  try {
+    fs.rmSync(CODEX_EVENT_JOURNAL_PATH, { force: true });
+  } catch {}
+  broadcastLocal({ type: 'codex_runtime_cleared', payload: { timestamp: new Date().toISOString() } });
+  res.sendStatus(204);
+});
+
 // Test Endpoint for real local trigger
 app.post('/api/real/test-event', (req, res) => {
   const isHighRisk = req.body?.risk === 'high';
@@ -392,11 +502,13 @@ async function start() {
     console.log(`\x1b[1;36m⚡ AGENT MATRIX Server running on http://0.0.0.0:${PORT}\x1b[0m`);
   });
 
-  // Secondary standalone listener on Port 7788 for native hook compatibility
-  try {
+  // Keep the existing Claude gateway port and use a separate Codex hook port.
+  const startLocalGateway = (port: number) => {
     const gatewayServer = http.createServer(app);
     const gatewayWss = new WebSocketServer({ server: gatewayServer, path: '/ws' });
     gatewayWss.on('connection', (ws) => {
+      registerLocalWebSocketClient(ws);
+      ws.send(JSON.stringify({ type: 'system_status', payload: getRealSystemStatus() }));
       ws.on('message', (message: string) => {
         try {
           const data = JSON.parse(message.toString());
@@ -406,20 +518,30 @@ async function start() {
               pendingApprovals.delete(data.requestId);
               resolver({ action: data.action || 'approve', prompt: data.prompt });
             }
+          } else if (data.type === 'ping') {
+            ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+          } else if (data.type === 'request_system_status') {
+            ws.send(JSON.stringify({ type: 'system_status', payload: getRealSystemStatus() }));
           }
         } catch {}
       });
     });
 
-    gatewayServer.listen(7788, '127.0.0.1', () => {
-      console.log(`\x1b[1;32m⚡ Embedded Agent Security Gateway listening on http://127.0.0.1:7788\x1b[0m`);
+    gatewayServer.listen(port, '127.0.0.1', () => {
+      if (port === CODEX_HOOK_PORT) codexHookGatewayState = 'listening';
+      console.log(`\x1b[1;32m⚡ Embedded Agent Runtime Gateway listening on http://127.0.0.1:${port}\x1b[0m`);
     });
     gatewayWss.on('error', () => {
-      // Ignore if port 7788 is already bound
+      // The primary HTTP server remains available when an optional gateway port is occupied.
     });
     gatewayServer.on('error', () => {
-      // Port 7788 already bound (e.g. VS Code extension), ignore
+      if (port === CODEX_HOOK_PORT) codexHookGatewayState = 'offline';
+      // Another local integration may already own this optional port.
     });
+  };
+
+  try {
+    [...new Set([7788, CODEX_HOOK_PORT])].forEach(startLocalGateway);
   } catch {}
 
   // Periodic real status broadcast every 4 seconds to all connected clients

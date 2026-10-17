@@ -1,8 +1,10 @@
 node_modules/
+.npm-cache-local/
 build/
 dist/
 coverage/
 .DS_Store
 *.log
+.codex/runtime-events.jsonl
 .env*
 !.env.example

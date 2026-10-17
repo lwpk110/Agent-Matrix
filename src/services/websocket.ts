@@ -1,6 +1,6 @@
 /**
  * Real-time WebSocket Telemetry Bus Client & Real Gateway API Bridge
- * Connects to local server WebSocket (/ws) and 7788 security gateway.
+ * Connects to local server WebSocket (/ws) with a 7789 local fallback gateway.
  * Supports Claude Code PreToolUse/PostToolUse hooks and Codex CLI events.
  * Smoothly degrades to simulation mode with background heartbeat probe when offline.
  */
@@ -8,9 +8,13 @@
 import { WsConnectionState, HitlApprovalRequest, ToolCall, RealSystemStatus } from '../types/matrix';
 
 export type WsEventHandler = (event: {
-  type: 'tool_call' | 'hitl_blocked' | 'telemetry' | 'agent_state' | 'pong' | 'system_status' | 'exec_result' | 'claude_hooks_configured';
+  type: 'tool_call' | 'hitl_blocked' | 'telemetry' | 'agent_state' | 'pong' | 'system_status' | 'exec_result' | 'claude_hooks_configured' | 'codex_runtime' | 'codex_runtime_cleared';
   payload: unknown;
 }) => void;
+
+export interface CodexRuntimeSnapshot {
+  events: unknown[];
+}
 
 class WebSocketTelemetryBus {
   private ws: WebSocket | null = null;
@@ -18,6 +22,7 @@ class WebSocketTelemetryBus {
   private reconnectTimer: number | null = null;
   private heartbeatTimer: number | null = null;
   private handlers: Set<WsEventHandler> = new Set();
+  private bufferedCodexEvents: Array<{ type: 'codex_runtime'; payload: unknown }> = [];
   private stateListeners: Set<(state: WsConnectionState) => void> = new Set();
   private forceSimulation: boolean = false;
   private retryAttempt: number = 0;
@@ -59,9 +64,16 @@ class WebSocketTelemetryBus {
 
   public subscribe(handler: WsEventHandler) {
     this.handlers.add(handler);
+    const pendingEvents = this.bufferedCodexEvents;
+    this.bufferedCodexEvents = [];
+    pendingEvents.forEach(handler);
     return () => {
       this.handlers.delete(handler);
     };
+  }
+
+  public dispatchLocalEvent(event: Parameters<WsEventHandler>[0]) {
+    this.handlers.forEach((handler) => handler(event));
   }
 
   private setState(state: WsConnectionState) {
@@ -82,7 +94,7 @@ class WebSocketTelemetryBus {
     this.setState('probing');
 
     // First try the current host's WebSocket endpoint (/ws on port 3000), which hosts both web and ws.
-    // If running in pure external port 7788 standalone mode and on HTTP localhost, fallback to port 7788.
+    // If the page's HTTP server is offline, fall back to the dedicated local runtime gateway.
     let targetUrl: string;
     const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
     const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
@@ -91,8 +103,8 @@ class WebSocketTelemetryBus {
       // Browsers forbid insecure ws:// on HTTPS pages; must connect to wss on current host
       targetUrl = `wss://${window.location.host}/ws`;
     } else if (isLocalhost && this.retryAttempt % 2 === 1) {
-      // Alternate retry to local port 7788 standalone gateway
-      targetUrl = 'ws://127.0.0.1:7788/ws';
+      // Alternate retry to the local 7789 runtime gateway.
+      targetUrl = 'ws://127.0.0.1:7789/ws';
     } else if (typeof window !== 'undefined') {
       targetUrl = `ws://${window.location.host}/ws`;
     } else {
@@ -115,6 +127,11 @@ class WebSocketTelemetryBus {
       this.ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          if (data.type === 'codex_runtime' && this.handlers.size === 0) {
+            this.bufferedCodexEvents.push(data);
+            if (this.bufferedCodexEvents.length > 500) this.bufferedCodexEvents.shift();
+            return;
+          }
           this.handlers.forEach((h) => h(data));
         } catch {
           // Non-json heartbeat
@@ -193,6 +210,12 @@ class WebSocketTelemetryBus {
       }
     } catch {}
     return null;
+  }
+
+  public async fetchCodexRuntimeEvents(): Promise<CodexRuntimeSnapshot> {
+    const response = await fetch('/api/real/codex-events', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Codex event history unavailable: HTTP ${response.status}`);
+    return await response.json();
   }
 
   /** REST: Fetch real git diff text */

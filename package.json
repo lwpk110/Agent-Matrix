@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test:topology": "node --import tsx --test src/components/topology/model.test.ts"
+    "test:topology": "node --import tsx --test src/components/topology/model.test.ts",
+    "test:codex-runtime": "node --import tsx --test src/services/codexRuntime.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

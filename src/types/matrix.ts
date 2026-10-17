@@ -41,6 +41,29 @@ export interface LogEntry {
   };
   toolCall?: ToolCall;
   riskLevel?: 'nominal' | 'elevated' | 'critical';
+  runtimeEvent?: {
+    provider: 'codex';
+    source: 'codex-hook';
+    eventId: string;
+    eventName: string;
+    sessionId?: string;
+    turnId?: string;
+    toolUseId?: string;
+    cwd?: string;
+    model?: string;
+    permissionMode?: string;
+    agentId?: string;
+    agentType?: string;
+    phase: 'prompt' | 'started' | 'completed' | 'permission' | 'lifecycle';
+    timestamp?: string;
+    hasToolResponse: boolean;
+    toolInputKeys?: string[];
+    permissionDecision?: string;
+    correlationStatus?: 'pending' | 'paired' | 'unpaired';
+    pairedEventId?: string;
+    observedIntervalMs?: number;
+    details: string;
+  };
 }
 
 export interface JevMetrics {
@@ -118,6 +141,9 @@ export interface RealSystemStatus {
   uptimeSec?: number;
   activeClientsCount: number;
   totalRealEvents: number;
+  totalCodexEvents?: number;
+  codexHookPort?: number;
+  codexHookGatewayState?: 'starting' | 'listening' | 'offline';
   hasClaudeHooks?: boolean;
   timestamp: string;
 }

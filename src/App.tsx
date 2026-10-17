@@ -31,6 +31,7 @@ import { AgentBlackBoxMonitor } from './components/AgentBlackBoxMonitor';
 import { AgentDynamicFlowHero } from './components/AgentDynamicFlowHero';
 import { MultiSessionFleetGrid } from './components/MultiSessionFleetGrid';
 import { Agent3dArchitectureTopology } from './components/Agent3dArchitectureTopology';
+import { CodexRuntimePage } from './components/CodexRuntimePage';
 import { telemetryBus } from './services/websocket';
 import { soundFx } from './utils/audio';
 import { generate60mHistory } from './utils/finOpsHistory';
@@ -51,6 +52,8 @@ export default function App() {
   const [dashboardViewMode, setDashboardViewMode] = useState<DashboardViewMode>('conduit');
   const [drillDownStage, setDrillDownStage] = useState<BlackBoxStage | null>(null);
   const [observedTopologyStage, setObservedTopologyStage] = useState<BlackBoxStage>();
+  const seenCodexEventIds = useRef(new Set<string>());
+  const [codexHistoryLoaded, setCodexHistoryLoaded] = useState(false);
 
   // Real System & Git status telemetry
   const [realStatus, setRealStatus] = useState<RealSystemStatus | null>(null);
@@ -424,7 +427,7 @@ export default function App() {
     },
   ]);
 
-  const addLog = useCallback((entry: Omit<LogEntry, 'id' | 'timestamp'>) => {
+  const addLog = useCallback((entry: Omit<LogEntry, 'id' | 'timestamp'>, options: { silent?: boolean } = {}) => {
     const now = new Date();
     const timeStr = now.toTimeString().split(' ')[0];
     const newEntry: LogEntry = {
@@ -432,11 +435,14 @@ export default function App() {
       id: 'log-' + Math.random().toString(36).substr(2, 9),
       timestamp: timeStr,
     };
-    setLogs((prev) => [...prev.slice(-60), newEntry]);
-    if (entry.riskLevel === 'critical' || entry.category === 'hitl') {
-      soundFx.playAlert();
-    } else {
-      soundFx.playChirp(entry.agentColor === 'amber' ? 920 : 740);
+    // Keep enough room for the gateway's 500-event Codex replay plus local status entries.
+    setLogs((prev) => [...prev.slice(-119), newEntry]);
+    if (!options.silent) {
+      if (entry.riskLevel === 'critical' || entry.category === 'hitl') {
+        soundFx.playAlert();
+      } else {
+        soundFx.playChirp(entry.agentColor === 'amber' ? 920 : 740);
+      }
     }
   }, []);
 
@@ -503,6 +509,13 @@ export default function App() {
 
   // Subscribe to WebSocket Telemetry Bus
   useEffect(() => {
+    telemetryBus.fetchCodexRuntimeEvents().then(({ events }) => {
+      events.forEach((payload) => {
+        telemetryBus.dispatchLocalEvent({ type: 'codex_runtime', payload });
+      });
+      setCodexHistoryLoaded(true);
+    }).catch(() => setCodexHistoryLoaded(true));
+
     const unsubState = telemetryBus.onStateChange((newState) => {
       setWsState(newState);
       if (newState === 'connected') {
@@ -603,6 +616,126 @@ export default function App() {
         }
       } else if (event.type === 'telemetry') {
         setObservedTopologyStage('feedback');
+      } else if (event.type === 'codex_runtime_cleared') {
+        setLogs((current) => current.filter((log) => !log.runtimeEvent));
+      } else if (event.type === 'codex_runtime') {
+        const runtimeEvent = event.payload as {
+          provider: 'codex';
+          source: 'codex-hook';
+          eventId?: string;
+          hookEventName: string;
+          sessionId?: string;
+          turnId?: string;
+          toolUseId?: string;
+          cwd?: string;
+          model?: string;
+          permissionMode?: string;
+          agentId?: string;
+          agentType?: string;
+          phase: 'prompt' | 'started' | 'completed' | 'permission' | 'lifecycle';
+          timestamp?: string;
+          hasToolResponse: boolean;
+          toolInputKeys?: string[];
+          permissionDecision?: string;
+          correlationStatus?: 'pending' | 'paired' | 'unpaired';
+          pairedEventId?: string;
+          observedIntervalMs?: number;
+          toolName?: string;
+          payload: Record<string, unknown>;
+        };
+        const { hookEventName, toolName, sessionId, payload } = runtimeEvent;
+        if (runtimeEvent.eventId && seenCodexEventIds.current.has(runtimeEvent.eventId)) return;
+        if (runtimeEvent.eventId) {
+          seenCodexEventIds.current.add(runtimeEvent.eventId);
+          if (seenCodexEventIds.current.size > 500) {
+            const oldestEventId = seenCodexEventIds.current.values().next().value;
+            if (oldestEventId) seenCodexEventIds.current.delete(oldestEventId);
+          }
+        }
+        if ((runtimeEvent.phase === 'started' || runtimeEvent.phase === 'completed') && runtimeEvent.toolUseId) {
+          setLogs((current) => current.map((log) => {
+            const counterpart = log.runtimeEvent;
+            if (!counterpart || counterpart.toolUseId !== runtimeEvent.toolUseId || counterpart.phase === runtimeEvent.phase) return log;
+            if (runtimeEvent.correlationStatus !== 'paired' && counterpart.correlationStatus !== 'paired') return log;
+            return {
+              ...log,
+              runtimeEvent: {
+                ...counterpart,
+                correlationStatus: 'paired',
+                pairedEventId: runtimeEvent.eventId || runtimeEvent.pairedEventId || counterpart.pairedEventId,
+                observedIntervalMs: runtimeEvent.observedIntervalMs ?? counterpart.observedIntervalMs,
+              },
+            };
+          }));
+        }
+        const stage: BlackBoxStage = hookEventName === 'PermissionRequest'
+          ? 'permission'
+          : hookEventName === 'UserPromptSubmit' || hookEventName === 'SessionStart' || hookEventName.includes('Compact')
+            ? 'prompt'
+            : hookEventName === 'Stop' || hookEventName === 'SessionEnd' || hookEventName === 'SubagentStop'
+              ? 'feedback'
+              : 'mcp_hook';
+        setObservedTopologyStage(stage);
+
+        const nestedPayload = payload.payload && typeof payload.payload === 'object'
+          ? payload.payload as Record<string, unknown>
+          : {};
+        const toolInput = payload.tool_input ?? nestedPayload.tool_input;
+        const promptValue = payload.prompt ?? nestedPayload.prompt;
+        const prompt = typeof promptValue === 'string' ? promptValue : '';
+        const inputSummary = toolInput === undefined ? '' : JSON.stringify(toolInput).slice(0, 320);
+        const toolKind = toolName?.startsWith('mcp__')
+          ? 'MCP'
+          : /search|browser/i.test(toolName || '')
+            ? 'SEARCH'
+            : /skills?[\\/].*SKILL\.md|SKILL\.md/i.test(inputSummary)
+              ? 'SKILL'
+              : '';
+        const message = hookEventName === 'UserPromptSubmit'
+          ? `用户提示词已提交：${prompt.slice(0, 240) || '(无文本内容)'}`
+          : toolName
+            ? `${hookEventName} · ${toolKind ? `${toolKind}/` : ''}${toolName}${inputSummary ? ` · ${inputSummary}` : ''}`
+            : `${hookEventName}${typeof payload.source === 'string' ? ` · ${payload.source}` : ''}`;
+        const isPermissionEvent = hookEventName === 'PermissionRequest';
+        const isToolEvent = hookEventName === 'PreToolUse' || hookEventName === 'PostToolUse';
+        const durationMs = typeof payload.duration_ms === 'number' ? payload.duration_ms : undefined;
+
+        addLog({
+          agentTag: 'CODEX LIVE',
+          agentColor: isPermissionEvent ? 'amber' : hookEventName === 'UserPromptSubmit' ? 'purple' : 'cyan',
+          category: isPermissionEvent ? 'alert' : isToolEvent ? 'tool' : 'system',
+          message,
+          riskLevel: isPermissionEvent ? 'elevated' : undefined,
+          toolCall: isToolEvent && toolName ? {
+            name: toolName,
+            args: inputSummary,
+            status: hookEventName === 'PostToolUse' ? 'completed' : 'executing',
+            durationMs,
+          } : undefined,
+          runtimeEvent: {
+            provider: 'codex',
+            source: 'codex-hook',
+            eventId: runtimeEvent.eventId || '',
+            eventName: hookEventName,
+            sessionId,
+            turnId: runtimeEvent.turnId,
+            toolUseId: runtimeEvent.toolUseId,
+            cwd: runtimeEvent.cwd,
+            model: runtimeEvent.model,
+            permissionMode: runtimeEvent.permissionMode,
+            agentId: runtimeEvent.agentId,
+            agentType: runtimeEvent.agentType,
+            phase: runtimeEvent.phase,
+            timestamp: runtimeEvent.timestamp,
+            hasToolResponse: runtimeEvent.hasToolResponse,
+            toolInputKeys: runtimeEvent.toolInputKeys,
+            permissionDecision: runtimeEvent.permissionDecision,
+            correlationStatus: runtimeEvent.correlationStatus,
+            pairedEventId: runtimeEvent.pairedEventId,
+            observedIntervalMs: runtimeEvent.observedIntervalMs,
+            details: JSON.stringify(payload, null, 2),
+          },
+        }, { silent: true });
       }
     });
 
@@ -1308,6 +1441,24 @@ export default function App() {
     return () => clearInterval(timer);
   }, [isStreaming, speed, activeSession.isBlocked, activeSession.isRealWorkspace, activeSessionId, mode, addLog, activeSession.activeFile]);
 
+  if (window.location.pathname === '/codex') {
+    return (
+      <CodexRuntimePage
+        language={language}
+        connectionState={wsState}
+        hookGatewayState={realStatus?.codexHookGatewayState || 'starting'}
+        historyLoaded={codexHistoryLoaded}
+        logs={logs}
+        onBack={() => { window.location.href = '/'; }}
+        onClear={async () => {
+          const response = await fetch('/api/real/codex-events', { method: 'DELETE' });
+          if (!response.ok) throw new Error('Could not clear Codex runtime events');
+          setLogs((current) => current.filter((log) => !log.runtimeEvent));
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#06070a] text-slate-200 flex flex-col font-mono selection:bg-purple-900/60 selection:text-purple-200">
       {/* Top Zsh Terminal Header with WebSocket Status & Connect Local Agent Button */}
@@ -1398,6 +1549,13 @@ export default function App() {
 
           {/* Clean Executive View Mode Switcher */}
           <div className="flex items-center gap-1 shrink-0 font-mono text-xs border-t lg:border-t-0 lg:border-l border-cyan-900/50 pt-2 lg:pt-0 lg:pl-3">
+            <a
+              href="/codex"
+              className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 bg-emerald-950 text-emerald-200 border border-emerald-800 hover:border-emerald-400"
+            >
+              <span>⌘</span>
+              <span>{language === 'zh' ? 'Codex 工作台' : 'Codex Runtime'}</span>
+            </a>
             <button
               onClick={() => {
                 soundFx.playKeyClick();
