@@ -196,7 +196,7 @@ export function createCodexRuntimeMock(prompt = MOCK_USER_PROMPT) {
       result: {
         isError: false,
         title: "AGENT MATRIX · NEURAL TREE",
-        heading: "看见 Agent 的每一次行动。",
+        heading: "Agent Runtime 运行观测站",
         url: "http://localhost:3102/codex",
         http_status: 200,
         console_errors: [],

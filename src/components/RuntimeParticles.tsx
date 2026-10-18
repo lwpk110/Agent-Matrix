@@ -1,178 +1,133 @@
 import { useEffect, useRef, type RefObject } from "react";
-import { runtimeHeartbeat } from "./runtimeHeartbeat";
+import type { MockRuntimeEvent } from "./codexRuntimeMock";
+import { runtimeFlow } from "./runtimeFlow";
 
 type Point = { x: number; y: number };
 type Anchor = Point & { left: number; right: number; top: number; bottom: number };
 type Trace = { points: Point[]; distances: number[]; length: number; color: string; from: string; to: string };
 
-/** ECG traces sit on straight node-to-node lanes so the topology stays readable. */
-export function RuntimeParticles({ host, playing, activeEvent }: {
-  host: RefObject<HTMLElement | null>;
-  playing: boolean;
-  activeEvent?: { node: string; relatedNodes: string[] };
+function rounded(points: Point[]) {
+  const sampled: Point[] = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const a = points[i - 1], b = points[i], c = points[i + 1];
+    const before = Math.hypot(b.x - a.x, b.y - a.y), after = Math.hypot(c.x - b.x, c.y - b.y);
+    const radius = Math.min(18, before / 2, after / 2);
+    const enter = { x: b.x + (a.x - b.x) * radius / (before || 1), y: b.y + (a.y - b.y) * radius / (before || 1) };
+    const exit = { x: b.x + (c.x - b.x) * radius / (after || 1), y: b.y + (c.y - b.y) * radius / (after || 1) };
+    sampled.push(enter);
+    for (let k = 1; k <= 12; k++) {
+      const t = k / 12, s = 1 - t;
+      sampled.push({ x: s * s * enter.x + 2 * s * t * b.x + t * t * exit.x, y: s * s * enter.y + 2 * s * t * b.y + t * t * exit.y });
+    }
+  }
+  sampled.push(points.at(-1)!);
+  return sampled;
+}
+
+/** Routed energy packets: quiet conduits, a luminous head, and a short fading tail. */
+export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 900, replaying = false }: {
+  host: RefObject<HTMLElement | null>; playing: boolean; activeEvent?: MockRuntimeEvent; eventDuration?: number; replaying?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const live = useRef({ playing, activeEvent });
-  live.current = { playing, activeEvent };
+  const live = useRef({ playing, activeEvent, eventDuration, replaying });
+  live.current = { playing, activeEvent, eventDuration, replaying };
   useEffect(() => {
-    const element = host.current;
-    const surface = canvas.current;
-    const ctx = surface?.getContext("2d");
+    const element = host.current, surface = canvas.current, ctx = surface?.getContext("2d");
     if (!element || !surface || !ctx) return;
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    let width = 0, height = 0, frame = 0, previous = 0, elapsed = 1.4;
-    let visible = true, dirty = true;
+    let width = 0, height = 0, frame = 0, previous = 0, elapsed = 0, eventAge = 0;
+    let eventId: string | undefined, visible = true, dirty = true;
     let traces: Trace[] = [];
     const measure = () => {
       const bounds = element.getBoundingClientRect();
-      width = bounds.width;
-      height = bounds.height;
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-      surface.width = Math.round(width * dpr);
-      surface.height = Math.round(height * dpr);
+      width = bounds.width; height = bounds.height;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      surface.width = Math.round(width * dpr); surface.height = Math.round(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      traces = [];
       const anchors = new Map<string, Anchor>();
       element.querySelectorAll<HTMLElement>("[data-runtime-node]").forEach(node => {
         const r = node.getBoundingClientRect();
-        anchors.set(node.dataset.runtimeNode!, {
-          x: r.left - bounds.left + r.width / 2,
-          y: r.top - bounds.top + r.height / 2,
-          left: r.left - bounds.left, right: r.right - bounds.left,
-          top: r.top - bounds.top, bottom: r.bottom - bounds.top,
-        });
+        anchors.set(node.dataset.runtimeNode!, { x: r.left - bounds.left + r.width / 2, y: r.top - bounds.top + r.height / 2, left: r.left - bounds.left, right: r.right - bounds.left, top: r.top - bounds.top, bottom: r.bottom - bounds.top });
       });
-      const add = (points: Point[], color = "#63e8ff", from = "", to = "") => {
-        const distances = [0];
-        for (let i = 1; i < points.length; i++) {
-          distances.push(distances[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y));
-        }
-        const length = distances.at(-1) || 0;
-        if (length > 3) traces.push({ points, distances, length, color, from, to });
+      traces = [];
+      const add = (from: string, to: string, path: (a: Anchor, b: Anchor) => Point[], color = "#72e7f4") => {
+        const a = anchors.get(from), b = anchors.get(to);
+        if (!a || !b) return;
+        const points = rounded(path(a, b)), distances = [0];
+        for (let i = 1; i < points.length; i++) distances.push(distances[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y));
+        traces.push({ from, to, points, distances, length: distances.at(-1)! , color });
       };
-      const edgePoint = (from: Anchor, to: Anchor): Point => {
-        const dx = to.x - from.x;
-        const dy = to.y - from.y;
-        const scale = 1 / Math.max(Math.abs(dx) / Math.max(1, (from.right - from.left) / 2), Math.abs(dy) / Math.max(1, (from.bottom - from.top) / 2));
-        return { x: from.x + dx * scale, y: from.y + dy * scale };
-      };
-      const straight = (fromId: string, toId: string, color?: string) => {
-        const from = anchors.get(fromId), to = anchors.get(toId);
-        if (!from || !to) return;
-        const a = edgePoint(from, to);
-        const b = edgePoint(to, from);
-        add(Array.from({ length: 180 }, (_, i) => {
-          const t = i / 179;
-          return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-        }), color, fromId, toId);
-      };
-      straight("input", "context");
-      straight("context", "prompt");
-      straight("prompt", "model");
-      straight("skill", "model", "#c0a1ff");
-      straight("model", "hook", "#82ffbf");
-      straight("hook", "gate", "#edcf92");
-      straight("gate", "tool", "#edcf92");
-      straight("gate", "mcp", "#edcf92");
-      straight("tool", "search", "#82ffbf");
-      straight("mcp", "search", "#82ffbf");
-      straight("tool", "result", "#82ffbf");
-      straight("mcp", "result", "#82ffbf");
-      straight("result", "model", "#c0a1ff");
-      straight("model", "output");
+      const across = (a: Anchor, b: Anchor) => b.top >= a.bottom
+        ? [{ x: a.right, y: a.y }, { x: width - 8, y: a.y }, { x: width - 8, y: b.y }, { x: b.right, y: b.y }]
+        : [{ x: a.right, y: a.y }, { x: (a.right + b.left) / 2, y: a.y }, { x: (a.right + b.left) / 2, y: b.y }, { x: b.left, y: b.y }];
+      const down = (a: Anchor, b: Anchor) => [{ x: a.x, y: a.bottom }, { x: a.x, y: (a.bottom + b.top) / 2 }, { x: b.x, y: (a.bottom + b.top) / 2 }, { x: b.x, y: b.top }];
+      add("input", "context", across); add("context", "prompt", across);
+      add("prompt", "model", (a, b) => width <= 600 ? [{ x: a.right, y: a.y }, { x: width - 8, y: a.y }, { x: width - 8, y: b.y - 38 }, { x: b.right, y: b.y - 38 }] : [{ x: a.x, y: a.bottom }, { x: a.x, y: a.bottom + 23 }, { x: b.x, y: a.bottom + 23 }, { x: b.x, y: b.top }]);
+      add("skill", "model", across, "#bca8f7"); add("model", "hook", across);
+      add("hook", "gate", down, "#dfc18a"); add("gate", "tool", down, "#dfc18a"); add("gate", "mcp", down, "#dfc18a");
+      ["tool", "mcp"].forEach(id => add(id, "result", (a, b) => {
+        const left = id === "tool", side = left ? a.left - 9 : a.right + 9;
+        return [{ x: a.x, y: a.bottom }, { x: a.x, y: a.bottom + 8 }, { x: side, y: a.bottom + 8 }, { x: side, y: b.y }, { x: left ? b.left : b.right, y: b.y }];
+      }, "#bca8f7"));
+      add("result", "model", (a, b) => width <= 800 ? [{ x: a.left, y: a.y }, { x: 8, y: a.y }, { x: 8, y: b.y + 38 }, { x: b.left, y: b.y + 38 }] : [{ x: a.left, y: a.y }, { x: (a.left + b.right) / 2, y: a.y }, { x: (a.left + b.right) / 2, y: b.y + 38 }, { x: b.right, y: b.y + 38 }], "#bca8f7");
+      add("model", "output", down);
       dirty = true;
     };
     const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    element.querySelectorAll("[data-runtime-node]").forEach(node => observer.observe(node));
-    measure();
-    const onMotion = () => { dirty = true; };
-    media.addEventListener("change", onMotion);
+    observer.observe(element); element.querySelectorAll("[data-runtime-node]").forEach(node => observer.observe(node)); measure();
+    const onMotion = () => { dirty = true; }; media.addEventListener("change", onMotion);
+    const pointAt = (trace: Trace, distance: number) => {
+      const d = Math.max(0, Math.min(trace.length, distance)); let i = 1;
+      while (i < trace.distances.length - 1 && trace.distances[i] < d) i++;
+      const a = trace.points[i - 1], b = trace.points[i], t = (d - trace.distances[i - 1]) / (trace.distances[i] - trace.distances[i - 1] || 1);
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    };
     function draw(now: number) {
       frame = requestAnimationFrame(draw);
-      if (!visible || document.hidden || now - previous < 32) return;
-      const dt = previous ? Math.min((now - previous) / 1000, 0.06) : 0;
-      previous = now;
-      const moving = live.current.playing && !media.matches;
+      if (!visible || document.hidden) { previous = 0; return; }
+      if (now - previous < 30) return;
+      const dt = previous ? Math.min((now - previous) / 1000, 0.06) : 0; previous = now;
+      const state = live.current;
+      if (eventId !== state.activeEvent?.id) { eventId = state.activeEvent?.id; eventAge = 0; dirty = true; }
+      const moving = state.playing && !media.matches;
       if (!moving && !dirty) return;
-      if (moving) elapsed += dt;
-      dirty = false;
-      ctx!.clearRect(0, 0, width, height);
-      ctx!.globalCompositeOperation = "lighter";
-      ctx!.lineCap = "round";
-      ctx!.lineJoin = "round";
+      if (moving) { elapsed += dt; eventAge += dt; } dirty = false;
+      ctx!.clearRect(0, 0, width, height); ctx!.lineCap = "round"; ctx!.lineJoin = "round";
+      const flow = runtimeFlow(state.activeEvent), idleStep = elapsed / 1.85;
       traces.forEach((trace, index) => {
-        ctx!.beginPath();
-        trace.points.forEach((p, i) => {
-          if (i === 0) ctx!.moveTo(p.x, p.y);
-          else ctx!.lineTo(p.x, p.y);
-        });
-        ctx!.lineWidth = 0.8;
-        ctx!.globalAlpha = 0.28;
-        ctx!.strokeStyle = trace.color;
-        ctx!.shadowBlur = 0;
-        ctx!.stroke();
-
-        const event = live.current.activeEvent;
-        const participants = event ? [event.node, ...event.relatedNodes] : [];
-        const activeIndex = event
-          ? traces.findIndex(trace => participants.includes(trace.from) && participants.includes(trace.to))
-          : Math.floor((elapsed * 0.55) % traces.length);
-        if (activeIndex !== index) return;
-        const step = (elapsed * 0.55) % traces.length;
-        const activeTrace = traces[activeIndex];
-        const travel = (elapsed * 0.55) % 1;
-        const progress = event
-          ? event.node === activeTrace.from ? travel : 1 - travel
-          : step - index;
-        const halfBeat = Math.min(72, trace.length * 0.36);
-        const center = progress * trace.length;
-        const amplitude = Math.min(16, trace.length * 0.2);
-        const shape = trace.points.map((p, i) => {
-          const before = trace.points[Math.max(0, i - 1)];
-          const after = trace.points[Math.min(trace.points.length - 1, i + 1)];
-          const dx = after.x - before.x, dy = after.y - before.y;
-          const norm = Math.hypot(dx, dy) || 1;
-          const u = trace.distances[i] / trace.length;
-          const fade = Math.min(1, u * 12, (1 - u) * 12);
-          const offset = runtimeHeartbeat((trace.distances[i] - center) / halfBeat) * amplitude * fade;
-          return { x: p.x + dy / norm * offset, y: p.y - dx / norm * offset };
-        });
-        const stroke = (lineWidth: number, opacity: number, blur: number, highlight: boolean) => {
-          ctx!.beginPath();
-          let started = false;
-          shape.forEach((p, i) => {
-            if (highlight && Math.abs(trace.distances[i] - center) > halfBeat * 1.15) { started = false; return; }
-            if (!started) ctx!.moveTo(p.x, p.y);
-            else ctx!.lineTo(p.x, p.y);
-            started = true;
-          });
-          ctx!.lineWidth = lineWidth;
-          ctx!.globalAlpha = opacity;
-          ctx!.strokeStyle = highlight && lineWidth < 2 ? "#e5fff8" : trace.color;
-          ctx!.shadowColor = trace.color;
-          ctx!.shadowBlur = blur;
-          ctx!.stroke();
-        };
-        stroke(4, 0.24, 12, true);
-        stroke(1.5, 0.98, 5, true);
+        ctx!.beginPath(); trace.points.forEach((p, i) => i ? ctx!.lineTo(p.x, p.y) : ctx!.moveTo(p.x, p.y));
+        ctx!.lineWidth = 1; ctx!.strokeStyle = trace.color; ctx!.globalAlpha = 0.19; ctx!.shadowBlur = 0; ctx!.stroke();
+        const returning = flow?.to === "model" && (flow.from === "tool" || flow.from === "mcp");
+        const group = index < 3 ? [0, 3] : index < 8 ? [3, 5] : [8, traces.length - 8];
+        const idleAge = idleStep + group[0] * 0.23;
+        const active = state.replaying ? Boolean(flow && (returning ? (trace.from === flow.from && trace.to === "result") || trace.from === "result" && trace.to === "model" : trace.from === flow.from && trace.to === flow.to)) : group[0] + Math.floor(idleAge) % group[1] === index;
+        if (!active) return;
+        const cycle = state.replaying ? eventAge / Math.max(0.12, state.eventDuration / 1000) : idleAge % 1;
+        const section = returning ? (trace.to === "result" ? cycle * 2 : cycle * 2 - 1) : cycle;
+        if (section < 0 || section > 1) return;
+        const t = Math.min(1, section / 0.8), head = t * t * (3 - 2 * t) * trace.length;
+        const tail = Math.min(76, trace.length * 0.44), opacity = Math.min(1, section * 14) * Math.min(1, (1 - section) * 10);
+        ctx!.shadowColor = trace.color;
+        for (let s = 0; s < 30; s++) {
+          const d = head - tail + tail * s / 30; if (d < 0) continue;
+          const a = pointAt(trace, d), b = pointAt(trace, d + tail / 30 + 0.5);
+          ctx!.beginPath(); ctx!.moveTo(a.x, a.y); ctx!.lineTo(b.x, b.y);
+          ctx!.strokeStyle = s > 25 ? "#eaffff" : trace.color; ctx!.lineWidth = 1.2 + s / 30;
+          ctx!.shadowBlur = 8; ctx!.globalAlpha = (s / 30) ** 2 * opacity; ctx!.stroke();
+        }
+        const tip = pointAt(trace, head); ctx!.beginPath(); ctx!.arc(tip.x, tip.y, 2.3, 0, Math.PI * 2);
+        ctx!.fillStyle = "#f2ffff"; ctx!.shadowBlur = 13; ctx!.globalAlpha = opacity; ctx!.fill();
+        if (section > 0.7) {
+          const arrival = (section - 0.7) / 0.3, end = trace.points.at(-1)!;
+          ctx!.beginPath(); ctx!.arc(end.x, end.y, 4 + arrival * 21, 0, Math.PI * 2);
+          ctx!.lineWidth = 1; ctx!.strokeStyle = trace.color; ctx!.shadowBlur = 4; ctx!.globalAlpha = (1 - arrival) * 0.65; ctx!.stroke();
+        }
       });
-      ctx!.globalAlpha = 1;
-      ctx!.shadowBlur = 0;
+      ctx!.globalAlpha = 1; ctx!.shadowBlur = 0;
     }
-    const intersection = new IntersectionObserver(entries => {
-      visible = entries[0].isIntersecting;
-      previous = 0;
-      dirty = true;
-    });
-    intersection.observe(element);
-    frame = requestAnimationFrame(draw);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      intersection.disconnect();
-      media.removeEventListener("change", onMotion);
-    };
+    const intersection = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; previous = 0; dirty = true; });
+    intersection.observe(element); frame = requestAnimationFrame(draw);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); intersection.disconnect(); media.removeEventListener("change", onMotion); };
   }, [host]);
   return <canvas ref={canvas} className="rt-particle-field" aria-hidden="true" />;
 }

@@ -12,7 +12,7 @@
     "lint": "tsc --noEmit",
     "test:topology": "node --import tsx --test src/components/topology/model.test.ts",
     "test:codex-runtime": "node --import tsx --test src/services/codexRuntime.test.ts src/services/codexAppServer.test.ts src/services/runtimeLogBuffer.test.ts src/components/CodexRuntimePage.test.tsx",
-    "test:codex-prototype": "node --import tsx --test src/components/codexRuntimeMock.test.ts"
+    "test:codex-prototype": "node --import tsx --test src/components/codexRuntimeMock.test.ts src/components/runtimeFlow.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

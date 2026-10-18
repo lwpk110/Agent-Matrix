@@ -174,10 +174,27 @@
   box-shadow: 0 0 24px color-mix(in srgb, var(--node-color) 45%, transparent);
 }
 .codex-3d-labels strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 11px;
   font-weight: 500;
+}
+.codex-3d-label-status {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--node-color);
+  box-shadow: 0 0 8px var(--node-color);
+  animation: codex-3d-node-status 1.8s ease-in-out infinite;
+}
+.codex-3d-labels small {
+  color: color-mix(in srgb, var(--node-color) 70%, #d5f7f4);
+  font: 8px Consolas, monospace;
+  letter-spacing: 1.1px;
 }
 .codex-3d-labels span {
   overflow: hidden;
@@ -343,6 +360,9 @@
     opacity: 0.35;
   }
 }
+@keyframes codex-3d-node-status {
+  50% { opacity: .42; transform: scale(.72); }
+}
 @keyframes codex-3d-scan {
   to {
     transform: translateY(460%);
@@ -399,6 +419,9 @@
   .codex-3d-labels span {
     display: none;
   }
+  .codex-3d-labels small {
+    font-size: 7px;
+  }
   .codex-3d-inspector {
     bottom: 14px;
   }
@@ -412,4 +435,45 @@
   .codex-3d-hud i {
     animation: none !important;
   }
+}
+
+/* Restrained holographic chrome shared with the 2D observatory. */
+.codex-3d-page { background: radial-gradient(ellipse at 50% 12%, #10323a44, transparent 60%), #060c11; }
+.codex-3d-header h1 { font-size: clamp(28px, 3vw, 43px); letter-spacing: -1px; }
+.codex-3d-header h1 span { color: #b5e7e9; text-shadow: 0 0 25px #8edbd72b; }
+.codex-3d-kicker { color: #80b9c2; letter-spacing: 2px; }
+.codex-3d-actions button { border-radius: 3px; background: #10212b; border-color: #86d3df30; color: #a8ccd1; }
+.codex-3d-actions button:first-child { background: #1f595f33; border-color: #8ce7df63; color: #c2faf1; }
+.codex-3d-stage { border-radius: 5px; border-color: #91dae339; background: radial-gradient(ellipse at 50% 46%, #16455235, transparent 54%), #060f16; }
+.codex-3d-stage:after { opacity: .28; background-size: 80px 80px, 80px 80px, 100% 5px; }
+.codex-3d-stage:before { opacity: .24; animation-duration: 18s; }
+.codex-3d-labels button { border-radius: 3px; background: #091820e8; border-color: #8cd4dd35; box-shadow: 0 6px 15px #0005; padding: 8px 12px; }
+.codex-3d-labels button strong { font-size: 12px; color: #d9ecee; }
+.codex-3d-labels button span { font-size: 9px; color: #7fadb6; }
+.codex-3d-labels button.is-active { border-color: #beffefaa; box-shadow: 0 0 22px #98eee326, inset 2px 0 #bcffef; background: #14323ae8; }
+.codex-3d-hud { top: 20px; left: 24px; right: 24px; padding-bottom: 16px; border-bottom: 1px solid #8ccad61c; color: #6897a4; letter-spacing: 1px; }
+.codex-3d-legend { bottom: 114px; }
+.codex-3d-signal-dock { position: absolute; z-index: 4; bottom: 20px; left: 20px; right: 20px; display: grid; grid-template-columns: 195px 1fr auto; align-items: center; gap: 25px; border: 1px solid #8bd4dc33; background: #0b1a23e8; backdrop-filter: blur(14px); padding: 17px 21px; box-shadow: 0 14px 30px #0005; }
+.codex-3d-signal-dock > span { font-size: 12px; color: #b2e0df; border-right: 1px solid #90ccd42d; }
+.codex-3d-signal-dock > span > small { display: block; font: 8px Consolas, monospace; letter-spacing: 1.4px; color: #658996; margin: 8px 0 0 13px; }
+.codex-3d-signal-dock i { display: inline-block; width: 4px; height: 4px; background: #aaffee; margin: 0 9px 2px 0; box-shadow: 0 0 9px #99ffee; border-radius: 50%; }
+.codex-3d-signal-dock > div { display: grid; gap: 7px; min-width: 0; }
+.codex-3d-signal-dock > div > small { color: #72a1af; font: 9px Consolas, monospace; letter-spacing: 1px; }
+.codex-3d-signal-dock strong { color: #c5e0e4; font-size: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.codex-3d-signal-dock a { display: flex; gap: 8px; align-items: center; color: #9fdad8; text-decoration: none; font-size: 11px; }
+.codex-3d-inspector { position: fixed; top: 156px; border-radius: 4px; border-color: #9ee9e44f; background: #0b1c26f5; z-index: 6; }
+@media (max-width: 850px) {
+  .codex-3d-stage { min-height: 650px; }
+  .codex-3d-signal-dock { grid-template-columns: 1fr; gap: 13px; padding: 15px; }
+  .codex-3d-signal-dock > span { border: 0; }
+  .codex-3d-signal-dock > span > small { display: inline; margin-left: 15px; font-size: 7px; }
+  .codex-3d-signal-dock a { display: none; }
+  .codex-3d-legend { bottom: 145px; gap: 10px; font-size: 9px; }
+  .codex-3d-inspector { top: auto; bottom: 30px; }
+}
+.codex-3d-footer { position: static; max-width: 1600px; margin: 12px auto 0; justify-content: space-between; }
+@media (max-width: 600px) {
+  .codex-3d-labels button { width: 92px; min-width: 0; max-width: 92px; padding: 6px 7px; }
+  .codex-3d-labels button strong { font-size: 10px; }
+  .codex-3d-footer { font-size: 8px; line-height: 1.8; }
 }

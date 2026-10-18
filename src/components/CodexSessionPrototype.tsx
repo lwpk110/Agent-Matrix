@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   Activity,
   ArrowDown,
@@ -27,6 +28,8 @@ import {
 } from "lucide-react";
 import "./CodexSessionPrototype.css";
 import { RuntimeParticles } from "./RuntimeParticles";
+import { RuntimeTelemetry } from "./RuntimeTelemetry";
+import "./RuntimeObservatory.css";
 import {
   createCodexRuntimeMock,
   MOCK_USER_PROMPT,
@@ -244,6 +247,7 @@ function GraphNode({
 }
 
 export function CodexSessionPrototype() {
+  const reducedMotion = useReducedMotion();
   const [selected, setSelected] = useState<StepId | null>(() => {
     const candidate = new URLSearchParams(window.location.search).get("node");
     return nodes.some((node) => node.id === candidate)
@@ -270,6 +274,12 @@ export function CodexSessionPrototype() {
   const mapRef = useRef<HTMLElement | null>(null);
   const activeStep = nodes.find((step) => step.id === selected);
   const currentEvent = replaying ? session.events[progress - 1] : undefined;
+  const currentStage = !currentEvent ? undefined : currentEvent.node === "input" ? "input"
+    : ["context", "prompt", "skill"].includes(currentEvent.node) ? "context"
+    : currentEvent.node === "output" ? "output" : "model";
+  const eventDuration = Math.min(900, Math.max(140,
+    (session.events[progress]?.offsetMs ?? 0) - (currentEvent?.offsetMs ?? 0),
+  ));
   const visibleEvents = session.events.slice(0, progress);
   const filteredEvents = visibleEvents.filter(
     (event) =>
@@ -441,6 +451,11 @@ export function CodexSessionPrototype() {
             })}
           </nav>
           <div className="cp-side-bottom">
+            <div className="rt-channel-list">
+              <span>本地工具 <b>03</b><i /></span>
+              <span>MCP 调用 <b>03</b><i /></span>
+              <span>权限确认 <b>01</b><i /></span>
+            </div>
             <div>
               <span className="cp-tiny-dot" />
               可观测 session
@@ -467,12 +482,12 @@ export function CodexSessionPrototype() {
             <div>
               <div className="cp-eyebrow">
                 <span />
-                AGENT RUNTIME / NEURAL OBSERVATORY
+                AGENT MATRIX / RUNTIME OBSERVATORY
               </div>
               <h1>
-                看见 Agent 的<span>每一次行动。</span>
+                Agent Runtime<span>运行观测站</span>
               </h1>
-              <p>从用户输入，到模型与工具之间的每一次往返。</p>
+              <p>沿着一次输入，看清上下文、模型决策、工具执行与结果回流。</p>
             </div>
             <div className="rt-controls">
               <button className="rt-replay" onClick={startReplay}>
@@ -514,6 +529,19 @@ export function CodexSessionPrototype() {
               事件观测
             </span>
           </div>
+          <nav className="rt-journey" aria-label="会话执行主线">
+            {([
+              ["input", "01", "用户输入", "任务进入会话"],
+              ["context", "02", "上下文准备", "消息 · 规则 · 能力定义"],
+              ["model", "03", "Agent 执行循环", "模型 ↔ 门禁 ↔ 工具"],
+              ["output", "04", "返回结果", "回答与可追溯证据"],
+            ] as const).map(([id, index, title, note]) => (
+              <button key={id} onClick={event => select(id, event.currentTarget)}
+                className={id === currentStage ? "is-current" : ""}>
+                <span>{index}</span><div><strong>{title}</strong><small>{note}</small></div><ChevronRight size={13} />
+              </button>
+            ))}
+          </nav>
           <section
             className="rt-map"
             ref={mapRef}
@@ -523,10 +551,12 @@ export function CodexSessionPrototype() {
               host={mapRef}
               playing={playing}
               activeEvent={currentEvent}
+              eventDuration={eventDuration}
+              replaying={replaying}
             />
             <div className="rt-map-bar">
               <span>
-                <CircleDot size={12} /> RUNTIME TOPOLOGY
+                <CircleDot size={12} /> SESSION TOPOLOGY <b>运行全景</b>
               </span>
               <span>
                 {replaying
@@ -690,8 +720,15 @@ export function CodexSessionPrototype() {
                   <span className="rt-model-orbit rt-orbit-two" />
                   <span className="rt-model-orbit rt-orbit-three" />
                   <span className="rt-model-dots" />
+                  <svg className="rt-core-reticle" viewBox="0 0 300 300" aria-hidden="true">
+                    <circle cx="150" cy="150" r="143" />
+                    <path d="M150 0v15M150 285v15M0 150h15M285 150h15M42 42l10 10M248 248l10 10M42 258l10-10M248 52l10-10" />
+                    <circle cx="150" cy="150" r="117" strokeDasharray="2 11" />
+                  </svg>
+                  <span className="rt-core-coordinate rt-coordinate-top">MODEL / 01</span>
+                  <span className="rt-core-coordinate rt-coordinate-bottom">CONTEXT → RESPONSE</span>
                   <span className="rt-model-center">
-                    <Sparkles size={32} />
+                    <Activity size={32} />
                     <strong>CODEX</strong>
                     <small>MODEL RUNTIME</small>
                   </span>
@@ -723,11 +760,12 @@ export function CodexSessionPrototype() {
               </div>
               <div className="rt-tool-lane">
                 <div className="rt-lane-label">
-                  EXECUTION LOOP <span>可多次循环</span>
+                  EXECUTION LOOP <span>执行与权限</span>
                 </div>
                 <div className="rt-hook-line">
-                  <button
+                  <button className={`${selected === "hook" ? "is-selected" : ""} ${currentEvent?.name === "PreToolUse" ? "is-active" : ""}`}
                     data-runtime-node="hook"
+                    aria-label="查看执行前 Hook"
                     onClick={(event) => select("hook", event.currentTarget)}
                   >
                     <PlugZap size={13} />
@@ -791,7 +829,7 @@ export function CodexSessionPrototype() {
                   <ArrowDown size={12} />
                 </div>
                 <button
-                  className={`rt-result ${graphState("hook")}`}
+                  className={`rt-result ${selected === "hook" ? "is-selected" : ""} ${currentEvent?.name.startsWith("PostToolUse") ? "is-active" : ""}`}
                   data-runtime-node="result"
                   aria-label="查看 Hook 观测层"
                   onClick={(event) => select("hook", event.currentTarget)}
@@ -805,6 +843,7 @@ export function CodexSessionPrototype() {
                 </button>
               </div>
             </div>
+            <RuntimeTelemetry events={visibleEvents} activeEvent={currentEvent} replaying={replaying} playing={playing} onEvent={openEvent} />
             <div className="rt-return-path">
               <span>
                 <ArrowLeft size={12} />
@@ -973,10 +1012,13 @@ export function CodexSessionPrototype() {
           </footer>
         </main>
       </div>
+      <AnimatePresence>
       {activeStep && (
-        <>
+        <motion.div className="rt-detail-layer" key="runtime-detail" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: reducedMotion ? 0 : 0.2 }}>
           <div className="cp-drawer-scrim" onClick={close} />
-          <aside
+          <motion.aside
+            initial={{ x: reducedMotion ? 0 : 45 }} animate={{ x: 0 }} exit={{ x: reducedMotion ? 0 : 45 }}
+            transition={{ duration: reducedMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] }}
             ref={drawer}
             role="dialog"
             aria-modal="true"
@@ -1135,9 +1177,10 @@ export function CodexSessionPrototype() {
                 </button>
               )}
             </div>
-          </aside>
-        </>
+          </motion.aside>
+        </motion.div>
       )}
+      </AnimatePresence>
     </div>
   );
 }

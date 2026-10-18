@@ -14,7 +14,8 @@ import {
 import { createCodexRuntimeMock, type MockNodeId } from "../codexRuntimeMock";
 import { RUNTIME_EDGES, RUNTIME_NODES, type RuntimeNode } from "./model";
 import { glowTexture } from "../topology/visualAssets";
-import { createHeartbeatTrace } from "./heartbeatTrace";
+import { createEnergyConduit } from "./energyConduit";
+import { runtimeFlow } from "../runtimeFlow";
 import "../codex3d/Codex3DTopology.css";
 
 const nodeById = new Map(RUNTIME_NODES.map((node) => [node.id, node]));
@@ -26,9 +27,9 @@ function glyphTexture(node: RuntimeNode) {
   context.translate(32, 32);
   context.scale(8, 8);
   for (const [blur, opacity] of [
-    [18, 0.35],
-    [7, 0.8],
-    [1, 1],
+    [10, 0.18],
+    [4, 0.45],
+    [0, 1],
   ]) {
     context.globalAlpha = opacity;
     context.shadowColor = "#d8f4ff";
@@ -44,12 +45,149 @@ function glyphTexture(node: RuntimeNode) {
   return texture;
 }
 
+type NodeVisualState = "idle" | "active" | "waiting" | "failed" | "completed";
+
+function lineLoop(points: Array<[number, number, number]>, material: THREE.LineBasicMaterial) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+  return new THREE.LineLoop(geometry, material);
+}
+
+function linePath(points: Array<[number, number, number]>, material: THREE.LineBasicMaterial) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+  return new THREE.Line(geometry, material);
+}
+
+function accentMaterial(color: string, opacity = 0.54) {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+}
+
+function accentLineMaterial(color: string, opacity = 0.6) {
+  return new THREE.LineBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+}
+
+/** Small semantic ornaments keep every endpoint recognisable at a glance. */
+function createNodeAccent(node: RuntimeNode) {
+  const accent = new THREE.Group();
+  accent.name = "semantic-accent";
+  const color = node.color;
+  const line = accentLineMaterial(color);
+  const dimLine = accentLineMaterial(color, 0.34);
+  const addRing = (radius: number, thickness = 0.025, opacity = 0.58) => {
+    const mesh = new THREE.Mesh(new THREE.RingGeometry(radius, radius + thickness, 64), accentMaterial(color, opacity));
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.name = "accent-ring";
+    accent.add(mesh);
+    return mesh;
+  };
+  if (node.id === "input") {
+    // Three expanding message ripples.
+    [1.9, 2.45, 3].forEach((radius, index) => {
+      const ring = addRing(radius, 0.025, 0.28 - index * 0.05);
+      ring.position.y = 0.16 + index * 0.025;
+    });
+  } else if (node.id === "context") {
+    // Layered context snapshots, like translucent sheets being stacked.
+    [0, 0.42, 0.84].forEach((offset, index) => {
+      const sheet = lineLoop([[-1.45, 0.3 + offset, 0.3 - index * 0.18], [1.45, 0.3 + offset, 0.3 - index * 0.18], [1.45, 0.3 + offset, -0.55 - index * 0.18], [-1.45, 0.3 + offset, -0.55 - index * 0.18]], index === 0 ? line : dimLine);
+      accent.add(sheet);
+    });
+  } else if (node.id === "prompt") {
+    // A document frame with animated message baselines.
+    accent.add(lineLoop([[-1.05, 0.25, 0], [0.75, 0.25, 0], [1.05, 0.65, 0], [1.05, 2.05, 0], [-1.05, 2.05, 0]], line));
+    [0.75, 1.08, 1.41].forEach((y, index) => accent.add(linePath([[-0.72, y, 0], [index === 2 ? 0.38 : 0.78, y, 0]], dimLine)));
+  } else if (node.id === "skill") {
+    // Open guide ring / book silhouette.
+    accent.add(lineLoop([[-1.38, 0.4, 0], [-0.1, 0.68, 0], [-0.1, 2.05, 0], [-1.38, 1.75, 0]], line));
+    accent.add(lineLoop([[1.38, 0.4, 0], [0.1, 0.68, 0], [0.1, 2.05, 0], [1.38, 1.75, 0]], line));
+    accent.add(linePath([[-0.1, 0.68, 0], [0, 0.52, 0], [0.1, 0.68, 0]], dimLine));
+  } else if (node.id === "hook") {
+    // Lifecycle fan: pre, around, post.
+    const points: Array<[number, number, number]> = [[-1.2, 0.2, 0], [0, 1.85, 0], [1.2, 0.2, 0]];
+    accent.add(linePath(points, line));
+    points.forEach(([x, y, z], index) => {
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(index === 1 ? 0.2 : 0.15, 12, 8), accentMaterial(color, 0.76));
+      dot.position.set(x, y, z);
+      dot.name = "hook-dot";
+      accent.add(dot);
+    });
+  } else if (node.id === "gate") {
+    // Hexagonal approval seal with a second lock ring.
+    const seal = new THREE.Mesh(new THREE.RingGeometry(1.55, 1.59, 6), accentMaterial(color, 0.7));
+    seal.rotation.x = -Math.PI / 2;
+    seal.name = "gate-seal";
+    accent.add(seal);
+    const lock = new THREE.Mesh(new THREE.TorusGeometry(0.52, 0.045, 8, 32), accentMaterial(color, 0.75));
+    lock.position.y = 1.15;
+    lock.rotation.x = Math.PI / 2;
+    accent.add(lock);
+    accent.add(linePath([[-0.52, 0.8, 0], [0.52, 0.8, 0]], dimLine));
+  } else if (node.id === "tool") {
+    // Terminal frame and a scan cursor.
+    accent.add(lineLoop([[-1.55, 0.35, 0], [1.55, 0.35, 0], [1.55, 1.95, 0], [-1.55, 1.95, 0]], line));
+    accent.add(linePath([[-1.15, 0.75, 0], [-0.72, 1.1, 0], [-1.15, 1.45, 0]], line));
+    accent.add(linePath([[-0.42, 0.75, 0], [0.78, 0.75, 0]], dimLine));
+  } else if (node.id === "mcp") {
+    // Two connector sockets joined by an external-service bridge.
+    [-0.72, 0.72].forEach((x) => {
+      const socket = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.065, 8, 32), accentMaterial(color, 0.7));
+      socket.position.set(x, 1.05, 0);
+      socket.rotation.y = Math.PI / 2;
+      accent.add(socket);
+    });
+    accent.add(linePath([[-0.3, 1.05, 0], [0.3, 1.05, 0]], line));
+    accent.add(addRing(1.8, 0.018, 0.22));
+  } else if (node.id === "search") {
+    // Retrieval scan ring and crosshair.
+    accent.add(addRing(1.48, 0.035, 0.62));
+    accent.add(linePath([[-1.85, 0.3, 0], [1.85, 0.3, 0]], dimLine));
+    accent.add(linePath([[0, 0.3, -1.85], [0, 0.3, 1.85]], dimLine));
+  } else if (node.id === "output") {
+    // Return acknowledgement rings.
+    [1.8, 2.35].forEach((radius, index) => {
+      const ring = addRing(radius, 0.026, 0.3 - index * 0.06);
+      ring.position.y = 0.12 + index * 0.04;
+    });
+    accent.add(linePath([[-1.1, 1.1, 0], [-0.2, 0.35, 0], [1.22, 1.75, 0]], line));
+  }
+  accent.position.y = -0.08;
+  return accent;
+}
+
+function nodeRole(node: RuntimeNode) {
+  return ({
+    input: "MESSAGE",
+    context: "SNAPSHOT",
+    prompt: "ASSEMBLY",
+    skill: "GUIDE",
+    model: "INFERENCE",
+    hook: "LIFECYCLE",
+    gate: "CONTROL",
+    tool: "LOCAL",
+    mcp: "CONNECTOR",
+    search: "RETRIEVAL",
+    output: "RESPONSE",
+  } as Record<MockNodeId, string>)[node.id];
+}
+
 export function Codex3DTopology() {
   const host = useRef<HTMLDivElement>(null);
   const labelRefs = useRef(new Map<MockNodeId, HTMLButtonElement>());
   const [selected, setSelected] = useState<MockNodeId | null>(null);
   const [paused, setPaused] = useState(false);
-  const [autoRotate, setAutoRotate] = useState(true);
+  const [autoRotate, setAutoRotate] = useState(false);
   const [view, setView] = useState<"orbit" | "top">("orbit");
   const [replaying, setReplaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -64,7 +202,7 @@ export function Codex3DTopology() {
   live.current = { selected, paused, autoRotate, view, currentEvent };
 
   useEffect(() => {
-    if (!replaying) return;
+    if (!replaying || paused) return;
     if (progress >= session.events.length - 1) {
       setReplaying(false);
       return;
@@ -76,7 +214,7 @@ export function Codex3DTopology() {
       Math.min(620, Math.max(150, gap * 0.82)),
     );
     return () => window.clearTimeout(timer);
-  }, [progress, replaying, session]);
+  }, [progress, replaying, paused, session]);
 
   useEffect(() => {
     const mount = host.current;
@@ -86,13 +224,14 @@ export function Codex3DTopology() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 1.8));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.3;
+    renderer.toneMappingExposure = 1.05;
     mount.appendChild(renderer.domElement);
     const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
     camera.position.set(16, 18, 23);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.06;
+    controls.autoRotateSpeed = 0.3;
     controls.minDistance = 10;
     controls.maxDistance = 44;
     controls.target.set(0, -1.1, 0);
@@ -123,6 +262,9 @@ export function Codex3DTopology() {
         group: THREE.Group;
         icon: THREE.Sprite;
         ring: THREE.Mesh;
+        accent: THREE.Group;
+        statusDot: THREE.Mesh;
+        arrival: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
         hit: THREE.Mesh;
       }
     >();
@@ -141,7 +283,7 @@ export function Codex3DTopology() {
           depthWrite: false,
         }),
       );
-      icon.scale.setScalar(node.id === "model" ? 5 : 3.6);
+      icon.scale.setScalar(node.id === "model" ? 4 : 2.8);
       icon.position.y = 1.2;
       group.add(icon);
       const aura = new THREE.Sprite(
@@ -174,7 +316,31 @@ export function Codex3DTopology() {
       );
       ring.rotation.x = -Math.PI / 2;
       group.add(ring);
+      const accent = createNodeAccent(node);
+      group.add(accent);
+      const statusDot = new THREE.Mesh(
+        new THREE.SphereGeometry(0.095, 12, 8),
+        accentMaterial("#496278", 0.72),
+      );
+      statusDot.position.set(1.58, 2.42, 0.02);
+      statusDot.name = "status-dot";
+      group.add(statusDot);
+      const arrival = new THREE.Mesh(
+        new THREE.RingGeometry(1.55, 1.58, 64),
+        new THREE.MeshBasicMaterial({ color: 0xcafff7, transparent: true, opacity: 0, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      arrival.rotation.x = -Math.PI / 2;
+      arrival.position.y = 0.04;
+      group.add(arrival);
       if (node.id === "model") {
+        const positions = new Float32Array(200 * 3);
+        for (let i = 0; i < 200; i++) {
+          const y = 1 - (i / 199) * 2, radius = Math.sqrt(1 - y * y), angle = i * 2.39996;
+          positions.set([Math.cos(angle) * radius * 1.65, y * 1.65 + 1.2, Math.sin(angle) * radius * 1.65], i * 3);
+        }
+        const shell = new THREE.BufferGeometry();
+        shell.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        group.add(new THREE.Points(shell, new THREE.PointsMaterial({ color: 0xa5e9ec, size: 0.035, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false })));
         [3, 3.55, 4.05].forEach((radius, index) => {
           const orbit = new THREE.Mesh(
             new THREE.TorusGeometry(
@@ -214,14 +380,18 @@ export function Codex3DTopology() {
       hit.position.y = 1;
       hit.userData.nodeId = node.id;
       group.add(hit);
-      objectMap.set(node.id, { group, icon, ring, hit });
+      objectMap.set(node.id, { group, icon, ring, accent, statusDot, arrival, hit });
       scene.add(group);
     }
     const grid = new THREE.GridHelper(42, 42, 0x1d5a78, 0x102a43);
     grid.position.y = -1;
     (grid.material as THREE.Material).transparent = true;
-    (grid.material as THREE.Material).opacity = 0.3;
+    (grid.material as THREE.Material).opacity = 0.16;
     scene.add(grid);
+    [6, 12, 18].forEach(radius => {
+      const orbit = new THREE.Mesh(new THREE.RingGeometry(radius, radius + 0.018, 160), new THREE.MeshBasicMaterial({ color: 0x8bcdd5, transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false }));
+      orbit.rotation.x = -Math.PI / 2; orbit.position.y = -0.97; scene.add(orbit);
+    });
     const starPositions = new Float32Array(720 * 3);
     for (let i = 0; i < 720; i++) {
       const angle = i * 2.4;
@@ -252,14 +422,17 @@ export function Codex3DTopology() {
     );
     scene.add(stars);
     const lines = RUNTIME_EDGES.map((edge, index) => {
-      const trace = createHeartbeatTrace(
+      const trace = createEnergyConduit(
         edge.type === "feedback" ? 0xb89aff
           : edge.type === "call" ? 0xf0c578
           : edge.type === "reference" ? 0x88a7bf : 0x55dfff,
       );
       scene.add(trace.mesh);
+      const packet = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0xc8fff5, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+      packet.scale.setScalar(0.65);
+      scene.add(packet);
       return {
-        edge, trace, phase: index,
+        edge, trace, packet, phase: index,
         curve: new THREE.QuadraticBezierCurve3(
           new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(),
         ),
@@ -272,6 +445,7 @@ export function Codex3DTopology() {
       camera.aspect = rect.width / rect.height;
       camera.updateProjectionMatrix();
       const nextMobileLayout = rect.width <= 600;
+      controls.maxDistance = nextMobileLayout ? 68 : 54;
       if (mobileLayout !== nextMobileLayout) {
         mobileLayout = nextMobileLayout;
         RUNTIME_NODES.forEach((node) =>
@@ -280,6 +454,10 @@ export function Codex3DTopology() {
       }
       const mobileFit = Math.max(1, 0.78 / camera.aspect);
       if (mobileLayout) camera.position.set(0, 35 * mobileFit, 0.1);
+      else if (live.current.view === "top") {
+        camera.position.set(0, 50, 1.1);
+        controls.target.set(0, 0.4, 1);
+      }
       else camera.position.set(16, 18, 23);
       controls.update();
     };
@@ -293,12 +471,17 @@ export function Codex3DTopology() {
     let down = { x: 0, y: 0 };
     let alive = true;
     let elapsed = 1.4;
+    let eventAge = 0;
+    let eventId: string | undefined;
+    const arrivals = new Map<MockNodeId, number>();
     const nodeEnergy = new Map<MockNodeId, number>();
     RUNTIME_NODES.forEach((node) => nodeEnergy.set(node.id, 0));
     let frames = 0;
     let last = performance.now();
     let fpsAt = last;
+    let cameraDestination: THREE.Vector3 | undefined;
     const pointerDown = (event: PointerEvent) => {
+      cameraDestination = undefined;
       down = { x: event.clientX, y: event.clientY };
     };
     const pointerUp = (event: PointerEvent) => {
@@ -324,22 +507,33 @@ export function Codex3DTopology() {
       const state = live.current;
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
-      if (!state.paused && !reducedMotion.matches) elapsed += dt;
+      const moving = !state.paused && !reducedMotion.matches;
+      if (eventId !== state.currentEvent?.id) { eventId = state.currentEvent?.id; eventAge = 0; }
+      if (moving) { elapsed += dt; eventAge += dt; }
       controls.autoRotate =
         state.autoRotate && !state.paused && !reducedMotion.matches;
       if (lastView !== state.view) {
         lastView = state.view;
-        camera.position.set(
+        cameraDestination = new THREE.Vector3(
           0,
-          state.view === "top" ? 35 : 20,
-          state.view === "top" ? 0.1 : 25,
+          state.view === "top" ? 50 : 20,
+          state.view === "top" ? 1.1 : 25,
         );
-        controls.target.set(0, 0.4, 0);
+        controls.target.set(0, 0.4, state.view === "top" ? 1 : 0);
         controls.update();
+      }
+      if (cameraDestination) {
+        camera.position.lerp(cameraDestination, 1 - Math.exp(-dt * 4));
+        if (camera.position.distanceTo(cameraDestination) < 0.02) cameraDestination = undefined;
       }
       controls.update();
       for (const node of RUNTIME_NODES) {
         const visual = objectMap.get(node.id)!;
+        const eventStatus: NodeVisualState = state.currentEvent?.node === node.id
+          ? state.currentEvent.status === "waiting" ? "waiting"
+            : state.currentEvent.status === "failed" ? "failed"
+              : state.currentEvent.status === "completed" || state.currentEvent.status === "allowed" ? "completed" : "active"
+          : state.currentEvent?.relatedNodes.includes(node.id) ? "active" : "idle";
         const active =
           state.selected === node.id ||
           state.currentEvent?.node === node.id ||
@@ -365,36 +559,66 @@ export function Codex3DTopology() {
         visual.ring.scale.setScalar(
           1 + nextIntensity * (0.12 + Math.sin(elapsed * 2) * 0.035),
         );
+        const statusColor = eventStatus === "failed" ? "#ff7890"
+          : eventStatus === "waiting" ? "#f2cf8d"
+            : eventStatus === "completed" ? "#a6f2c6"
+              : eventStatus === "active" ? node.color : "#496278";
+        const statusMaterial = visual.statusDot.material as THREE.MeshBasicMaterial;
+        statusMaterial.color.set(statusColor);
+        statusMaterial.opacity = eventStatus === "idle" ? 0.5 : 0.95;
+        visual.statusDot.scale.setScalar(eventStatus === "waiting" ? 1 + Math.sin(elapsed * 4) * 0.15 : 1);
+        const accentTarget = eventStatus === "failed" ? 0.85
+          : eventStatus === "waiting" ? 0.75
+            : eventStatus === "active" ? 0.88
+              : eventStatus === "completed" ? 0.62 : 0.3;
+        visual.accent.scale.setScalar(1 + nextIntensity * 0.035 + (eventStatus === "waiting" ? Math.sin(elapsed * 3.2) * 0.025 : 0));
+        visual.accent.traverse((child) => {
+          const material = (child as THREE.Mesh | THREE.Line).material;
+          if (!material) return;
+          if (Array.isArray(material)) material.forEach((entry) => { entry.opacity = THREE.MathUtils.lerp(entry.opacity, accentTarget, 1 - Math.exp(-dt * 7)); });
+          else material.opacity = THREE.MathUtils.lerp(material.opacity, accentTarget, 1 - Math.exp(-dt * 7));
+        });
+        const arrivalAt = arrivals.get(node.id);
+        const arrivalAge = arrivalAt === undefined ? 2 : elapsed - arrivalAt;
+        visual.arrival.scale.setScalar(1 + Math.min(1, arrivalAge / 0.8) * 0.8);
+        visual.arrival.material.opacity = Math.max(0, 1 - arrivalAge / 0.8) * 0.65;
       }
+      const flow = runtimeFlow(state.currentEvent);
+      const nextEvent = state.currentEvent && session.events[session.events.indexOf(state.currentEvent) + 1];
+      const duration = Math.min(620, Math.max(150, ((nextEvent?.offsetMs ?? 0) - (state.currentEvent?.offsetMs ?? 0)) * 0.82)) / 1000;
+      const pulseStep = elapsed / 1.85;
+      let activePackets = 0;
       for (const item of lines) {
         const from = objectMap.get(item.edge.from)!.group.position;
         const to = objectMap.get(item.edge.to)!.group.position;
         item.curve.v0.copy(from).add(new THREE.Vector3(0, 0.8, 0));
         item.curve.v1
           .copy(from)
-          .lerp(to, 0.5);
+          .lerp(to, 0.5)
+          .add(new THREE.Vector3(0, item.edge.type === "feedback" ? 3.4 : 0.8, 0));
         item.curve.v2.copy(to).add(new THREE.Vector3(0, 0.8, 0));
-        const participants = [
-          state.currentEvent?.node,
-          ...(state.currentEvent?.relatedNodes || []),
-        ];
-        const hot =
-          participants.includes(item.edge.from) &&
-          participants.includes(item.edge.to);
+        const hot = flow?.from === item.edge.from && flow?.to === item.edge.to;
         item.energy = THREE.MathUtils.lerp(
           item.energy,
           hot ? 1 : 0,
           1 - Math.exp(-dt * 6),
         );
-        const pulseStep = (elapsed * 0.55) % lines.length;
+        const group = item.phase < 4 ? [0, 4] : item.phase < 8 ? [4, 4] : [8, lines.length - 8];
+        const idleAge = pulseStep + group[0] * 0.23;
         const active = state.currentEvent
           ? hot
-          : Math.floor(pulseStep) === item.phase;
-        const pulseProgress = state.currentEvent
-          ? (elapsed * 0.55) % 1
-          : pulseStep - item.phase;
+          : group[0] + Math.floor(idleAge) % group[1] === item.phase;
+        const rawProgress = state.currentEvent ? eventAge / duration : idleAge % 1;
+        const eased = Math.min(1, rawProgress / 0.82);
+        const pulseProgress = eased * eased * (3 - 2 * eased);
+        if (active && moving && rawProgress < 1) activePackets++;
+        const trimStart = Math.min(0.28, (item.edge.from === "model" ? 2.7 : 1.6) / item.curve.getLength());
+        const trimEnd = 1 - Math.min(0.28, (item.edge.to === "model" ? 2.7 : 1.6) / item.curve.getLength());
+        item.curve.getPoint(trimStart + pulseProgress * (trimEnd - trimStart), item.packet.position);
+        (item.packet.material as THREE.SpriteMaterial).opacity = active && !reducedMotion.matches && rawProgress < 1 ? Math.min(1, rawProgress * 12) * Math.min(1, (1 - rawProgress) * 8) : 0;
+        if (active && moving && rawProgress > 0.76 && rawProgress < 0.84) arrivals.set(item.edge.to, elapsed);
         item.trace.update(
-          item.curve, camera, pulseProgress, active, item.energy,
+          item.curve, camera, pulseProgress, active && rawProgress < 1 && !reducedMotion.matches, item.energy,
           item.edge.from === "model" ? 2.7 : 1.6,
           item.edge.to === "model" ? 2.7 : 1.6,
           mount.clientWidth, mount.clientHeight,
@@ -426,10 +650,7 @@ export function Codex3DTopology() {
       if (now - fpsAt > 1000) {
         setStats({
           fps: frames,
-          pulses:
-            live.current.paused || reducedMotion.matches
-              ? 0
-            : 1,
+          pulses: activePackets,
         });
         frames = 0;
         fpsAt = now;
@@ -468,11 +689,10 @@ export function Codex3DTopology() {
             <Sparkles size={13} /> CODEX RUNTIME / 3D TOPOLOGY
           </span>
           <h1>
-            Agent Runtime <span>Orbit</span>
+            Runtime <span>Observatory</span>
           </h1>
           <p>
-            用一条可旋转的空间链路，查看同一 session
-            的上下文、模型、工具与结果。
+            空间运行全景 · 消息进入、工具调用与结果回流
           </p>
         </div>
         <div className="codex-3d-actions">
@@ -480,6 +700,7 @@ export function Codex3DTopology() {
             onClick={() => {
               setProgress(0);
               setReplaying(true);
+              setPaused(false);
             }}
           >
             <Play size={14} />
@@ -492,8 +713,8 @@ export function Codex3DTopology() {
           <button onClick={() => setAutoRotate(!autoRotate)}>
             {autoRotate ? <Pause size={14} /> : <Play size={14} />}自动旋转
           </button>
-          <button onClick={() => setPaused(!paused)}>
-            {paused ? <Play size={14} /> : <Pause size={14} />}链路脉冲
+          <button aria-label={paused ? "继续回放与光流" : "暂停回放与光流"} onClick={() => setPaused(!paused)}>
+            {paused ? <Play size={14} /> : <Pause size={14} />}{paused ? "继续光流" : "暂停光流"}
           </button>
         </div>
       </header>
@@ -507,10 +728,12 @@ export function Codex3DTopology() {
                 else labelRefs.current.delete(node.id);
               }}
               key={node.id}
+              className={selected === node.id || currentEvent?.node === node.id ? "is-active" : ""}
               onClick={() => setSelected(node.id)}
               style={{ "--node-color": node.color } as React.CSSProperties}
             >
-              <strong>{node.title}</strong>
+              <strong><i className="codex-3d-label-status" />{node.title}</strong>
+              <small>{nodeRole(node)}</small>
               <span>{node.note}</span>
             </button>
           ))}
@@ -545,10 +768,15 @@ export function Codex3DTopology() {
             结果回流
           </span>
         </div>
+        <div className="codex-3d-signal-dock">
+          <span><i />{replaying ? paused ? "回放已暂停" : "会话回放" : "拓扑预览"}<small>MOCK SESSION / TURN 08</small></span>
+          <div><small>{currentEvent?.name ?? "AGENT RUNTIME / DATA FLOW"}</small><strong>{currentEvent?.title ?? "输入 → 上下文 → 模型 ⇄ 工具 → 返回用户"}</strong></div>
+          <a href={`/codex${currentEvent ? `?node=${currentEvent.node}` : ""}`}>查看事件详情 <Info size={13} /></a>
+        </div>
       </section>
       {selectedNode && (
         <aside className="codex-3d-inspector">
-          <button className="codex-3d-close" onClick={() => setSelected(null)}>
+          <button aria-label="关闭节点详情" className="codex-3d-close" onClick={() => setSelected(null)}>
             <X size={17} />
           </button>
           <span
@@ -576,11 +804,7 @@ export function Codex3DTopology() {
             <span>
               关联调用{" "}
               <b>
-                {session.calls.filter(
-                  (call) =>
-                    call.type ===
-                    (selectedNode.id === "tool" ? "local" : "mcp"),
-                ).length || "—"}
+                {new Set(session.events.filter(event => event.callId && (event.node === selectedNode.id || event.relatedNodes.includes(selectedNode.id))).map(event => event.callId)).size}
               </b>
             </span>
           </div>
