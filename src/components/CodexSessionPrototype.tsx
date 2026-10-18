@@ -200,6 +200,132 @@ const nodes = [
   searchStep,
   ...steps.slice(7),
 ];
+
+type StarPeer = {
+  id?: StepId;
+  title: string;
+  relation: string;
+  tone: "cyan" | "violet" | "amber" | "green";
+};
+
+const starTopology: Record<StepId, StarPeer[]> = {
+  input: [
+    { id: "context", title: "上下文组装", relation: "下一步", tone: "cyan" },
+    { title: "会话历史", relation: "随回合携带", tone: "violet" },
+    { title: "权限边界", relation: "约束", tone: "amber" },
+  ],
+  context: [
+    { id: "input", title: "用户输入", relation: "来源", tone: "cyan" },
+    { id: "prompt", title: "提示词编排", relation: "组合", tone: "violet" },
+    { id: "skill", title: "Skill 能力", relation: "按需加入", tone: "violet" },
+    { id: "model", title: "模型调用", relation: "发送", tone: "green" },
+  ],
+  prompt: [
+    { id: "context", title: "上下文", relation: "读取", tone: "cyan" },
+    { id: "skill", title: "Skill 指南", relation: "补充规则", tone: "violet" },
+    { id: "model", title: "模型调用", relation: "请求", tone: "green" },
+  ],
+  skill: [
+    { id: "prompt", title: "提示词编排", relation: "提供规范", tone: "violet" },
+    { id: "context", title: "上下文", relation: "写入资料", tone: "cyan" },
+    { id: "model", title: "模型调用", relation: "可用能力", tone: "green" },
+  ],
+  model: [
+    { id: "prompt", title: "提示词编排", relation: "接收消息", tone: "cyan" },
+    { id: "gate", title: "权限门禁", relation: "请求检查", tone: "amber" },
+    { id: "tool", title: "工具执行", relation: "发起调用", tone: "green" },
+    { id: "output", title: "返回用户", relation: "直接回答", tone: "violet" },
+  ],
+  hook: [
+    { id: "model", title: "模型调用", relation: "触发", tone: "green" },
+    { id: "gate", title: "权限门禁", relation: "观察前置", tone: "amber" },
+    { title: "运行事件", relation: "记录状态", tone: "cyan" },
+  ],
+  gate: [
+    { id: "hook", title: "Hook 观测", relation: "进入检查", tone: "cyan" },
+    { id: "tool", title: "本地工具", relation: "允许执行", tone: "green" },
+    { id: "mcp", title: "MCP 连接器", relation: "允许调用", tone: "violet" },
+    { title: "用户确认", relation: "需要时等待", tone: "amber" },
+  ],
+  tool: [
+    { id: "gate", title: "权限门禁", relation: "通过后运行", tone: "amber" },
+    { id: "search", title: "搜索", relation: "读取资料", tone: "cyan" },
+    { id: "model", title: "模型调用", relation: "返回结果", tone: "green" },
+  ],
+  mcp: [
+    { id: "gate", title: "权限门禁", relation: "通过后调用", tone: "amber" },
+    { id: "search", title: "搜索", relation: "外部资料", tone: "cyan" },
+    { id: "model", title: "模型调用", relation: "返回结果", tone: "green" },
+  ],
+  search: [
+    { id: "tool", title: "本地工具", relation: "rg / 文件", tone: "cyan" },
+    { id: "mcp", title: "MCP 连接器", relation: "网页资料", tone: "violet" },
+    { id: "context", title: "上下文", relation: "加入证据", tone: "green" },
+  ],
+  output: [
+    { id: "model", title: "模型调用", relation: "生成回答", tone: "green" },
+    { title: "工具结果", relation: "汇总证据", tone: "cyan" },
+    { id: "input", title: "用户", relation: "看到结果", tone: "violet" },
+  ],
+};
+
+const starPeerSlots = [
+  { x: 140, y: 18 },
+  { x: 254, y: 79 },
+  { x: 224, y: 182 },
+  { x: 56, y: 182 },
+];
+
+function HoverStarTopology({ nodeId, x, y }: { nodeId: StepId; x: number; y: number }) {
+  const center = nodes.find((node) => node.id === nodeId)!;
+  const CenterIcon = center.icon;
+  const peers = starTopology[nodeId].slice(0, starPeerSlots.length);
+  return (
+    <div
+      className="rt-hover-star"
+      style={{ left: x, top: y }}
+      aria-label={`${center.title}的关联拓扑`}
+    >
+      <svg viewBox="0 0 280 220" aria-hidden="true">
+        <defs>
+          <filter id="rt-star-glow"><feGaussianBlur stdDeviation="2.8" /></filter>
+        </defs>
+        {peers.map((peer, index) => {
+          const slot = starPeerSlots[index];
+          return (
+            <g key={`${peer.title}-${index}`} className={`rt-star-edge is-${peer.tone}`}>
+              <line x1="140" y1="105" x2={slot.x} y2={slot.y + 21} />
+              <circle cx={slot.x} cy={slot.y + 21} r="2.5" />
+            </g>
+          );
+        })}
+        <circle className="rt-star-core-halo" cx="140" cy="105" r="42" filter="url(#rt-star-glow)" />
+      </svg>
+      <div className="rt-star-center">
+        <span><CenterIcon size={15} /></span>
+        <strong>{center.title}</strong>
+        <small>{center.subtitle}</small>
+      </div>
+      {peers.map((peer, index) => {
+        const slot = starPeerSlots[index];
+        const PeerIcon = peer.id ? nodes.find((node) => node.id === peer.id)?.icon : Network;
+        return (
+          <div
+            key={`${peer.title}-label`}
+            className={`rt-star-peer is-${peer.tone}`}
+            style={{ left: slot.x, top: slot.y }}
+          >
+            <span>{PeerIcon && <PeerIcon size={11} />}</span>
+            <strong>{peer.title}</strong>
+            <small>{peer.relation}</small>
+          </div>
+        );
+      })}
+      <div className="rt-star-caption"><i />关系预览 · 点击节点查看详情</div>
+    </div>
+  );
+}
+
 function Tag({ kind }: { kind: Kind }) {
   const { label, icon: Icon } = kinds[kind];
   return (
@@ -268,6 +394,7 @@ export function CodexSessionPrototype() {
   const [showAll, setShowAll] = useState(false);
   const [callFilter, setCallFilter] = useState<string | null>(null);
   const [focusedEvent, setFocusedEvent] = useState<string | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<{ id: StepId; x: number; y: number } | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
   const closeButton = useRef<HTMLButtonElement | null>(null);
   const drawer = useRef<HTMLElement | null>(null);
@@ -376,6 +503,19 @@ export function CodexSessionPrototype() {
     select(event.node, source);
     setFocusedEvent(event.id);
     setDetailTab("events");
+  };
+  const updateHoveredNode = (target: Element | null) => {
+    const map = mapRef.current;
+    const runtimeTarget = target?.closest<HTMLElement>('[data-runtime-node]');
+    if (!map || !runtimeTarget) return;
+    const rawId = runtimeTarget.dataset.runtimeNode;
+    const id = rawId === "result" ? "hook" : rawId;
+    if (!id || !nodes.some((node) => node.id === id)) return;
+    const mapRect = map.getBoundingClientRect();
+    const targetRect = runtimeTarget.getBoundingClientRect();
+    const x = Math.min(mapRect.width - 150, Math.max(150, targetRect.left - mapRect.left + targetRect.width / 2));
+    const y = Math.min(mapRect.height - 122, Math.max(132, targetRect.top - mapRect.top + targetRect.height / 2));
+    setHoveredNode({ id: id as StepId, x, y });
   };
 
   return (
@@ -546,6 +686,9 @@ export function CodexSessionPrototype() {
             className="rt-map"
             ref={mapRef}
             aria-label="Codex runtime 完整链路"
+            onMouseOver={(event) => updateHoveredNode(event.target as Element)}
+            onFocusCapture={(event) => updateHoveredNode(event.target as Element)}
+            onMouseLeave={() => setHoveredNode(null)}
           >
             <RuntimeParticles
               host={mapRef}
@@ -565,6 +708,13 @@ export function CodexSessionPrototype() {
                 <span className="rt-blink" />
               </span>
             </div>
+            {hoveredNode && !selected && (
+              <HoverStarTopology
+                nodeId={hoveredNode.id}
+                x={hoveredNode.x}
+                y={hoveredNode.y}
+              />
+            )}
             <div className="rt-composer-row">
               <form
                 className={`rt-composer ${graphState("input")}`}
