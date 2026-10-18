@@ -270,10 +270,10 @@ const starTopology: Record<StepId, StarPeer[]> = {
 };
 
 const starPeerSlots = [
-  { x: 140, y: 18 },
-  { x: 254, y: 79 },
-  { x: 224, y: 182 },
-  { x: 56, y: 182 },
+  { x: 165, y: 51 },
+  { x: 282, y: 112 },
+  { x: 244, y: 204 },
+  { x: 86, y: 204 },
 ];
 
 function HoverStarTopology({ nodeId, x, y }: { nodeId: StepId; x: number; y: number }) {
@@ -286,7 +286,11 @@ function HoverStarTopology({ nodeId, x, y }: { nodeId: StepId; x: number; y: num
       style={{ left: x, top: y }}
       aria-label={`${center.title}的关联拓扑`}
     >
-      <svg viewBox="0 0 280 220" aria-hidden="true">
+      <div className="rt-star-head">
+        <span>RELATION MAP</span>
+        <strong>关联拓扑</strong>
+      </div>
+      <svg viewBox="0 0 330 250" aria-hidden="true">
         <defs>
           <filter id="rt-star-glow"><feGaussianBlur stdDeviation="2.8" /></filter>
         </defs>
@@ -294,12 +298,12 @@ function HoverStarTopology({ nodeId, x, y }: { nodeId: StepId; x: number; y: num
           const slot = starPeerSlots[index];
           return (
             <g key={`${peer.title}-${index}`} className={`rt-star-edge is-${peer.tone}`}>
-              <line x1="140" y1="105" x2={slot.x} y2={slot.y + 21} />
+              <line x1="165" y1="128" x2={slot.x} y2={slot.y + 21} />
               <circle cx={slot.x} cy={slot.y + 21} r="2.5" />
             </g>
           );
         })}
-        <circle className="rt-star-core-halo" cx="140" cy="105" r="42" filter="url(#rt-star-glow)" />
+        <circle className="rt-star-core-halo" cx="165" cy="128" r="48" filter="url(#rt-star-glow)" />
       </svg>
       <div className="rt-star-center">
         <span><CenterIcon size={15} /></span>
@@ -321,7 +325,7 @@ function HoverStarTopology({ nodeId, x, y }: { nodeId: StepId; x: number; y: num
           </div>
         );
       })}
-      <div className="rt-star-caption"><i />关系预览 · 点击节点查看详情</div>
+      <div className="rt-star-caption"><i />悬浮查看关系 · 点击进入详情</div>
     </div>
   );
 }
@@ -513,8 +517,12 @@ export function CodexSessionPrototype() {
     if (!id || !nodes.some((node) => node.id === id)) return;
     const mapRect = map.getBoundingClientRect();
     const targetRect = runtimeTarget.getBoundingClientRect();
-    const x = Math.min(mapRect.width - 150, Math.max(150, targetRect.left - mapRect.left + targetRect.width / 2));
-    const y = Math.min(mapRect.height - 122, Math.max(132, targetRect.top - mapRect.top + targetRect.height / 2));
+    const targetX = targetRect.left - mapRect.left + targetRect.width / 2;
+    const targetY = targetRect.top - mapRect.top + targetRect.height / 2;
+    const xSide = targetX > mapRect.width * 0.58 ? -1 : 1;
+    const ySide = targetY > mapRect.height * 0.62 ? -1 : targetY < mapRect.height * 0.28 ? 1 : 0;
+    const x = Math.min(mapRect.width - 182, Math.max(182, targetX + xSide * 174));
+    const y = Math.min(mapRect.height - 142, Math.max(142, targetY + ySide * 142));
     setHoveredNode({ id: id as StepId, x, y });
   };
 
