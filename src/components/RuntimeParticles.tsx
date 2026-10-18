@@ -96,6 +96,48 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
       const a = trace.points[i - 1], b = trace.points[i], t = (d - trace.distances[i - 1]) / (trace.distances[i] - trace.distances[i - 1] || 1);
       return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
     };
+    const drawPacket = (trace: Trace, section: number) => {
+      const t = Math.min(1, section / 0.86), eased = t * t * t * (t * (t * 6 - 15) + 10), head = eased * trace.length;
+      const tail = Math.min(76, trace.length * 0.44), opacity = Math.min(1, section * 5) * Math.min(1, (1 - section) * 6);
+      ctx!.shadowColor = trace.color;
+      for (let s = 0; s < 30; s++) {
+        const d = head - tail + tail * s / 30; if (d < 0) continue;
+        const a = pointAt(trace, d), b = pointAt(trace, d + tail / 30 + 0.5);
+        ctx!.beginPath(); ctx!.moveTo(a.x, a.y); ctx!.lineTo(b.x, b.y);
+        ctx!.strokeStyle = s > 25 ? "#eaffff" : trace.color; ctx!.lineWidth = 1.2 + s / 30;
+        ctx!.shadowBlur = 8; ctx!.globalAlpha = (s / 30) ** 2 * opacity; ctx!.stroke();
+      }
+      const tip = pointAt(trace, head); ctx!.beginPath(); ctx!.arc(tip.x, tip.y, 2.3, 0, Math.PI * 2);
+      ctx!.fillStyle = "#f2ffff"; ctx!.shadowBlur = 13; ctx!.globalAlpha = opacity; ctx!.fill();
+      if (section > 0.7) {
+        const arrival = (section - 0.7) / 0.3, end = trace.points.at(-1)!;
+        ctx!.beginPath(); ctx!.arc(end.x, end.y, 4 + arrival * 21, 0, Math.PI * 2);
+        ctx!.lineWidth = 1; ctx!.strokeStyle = trace.color; ctx!.shadowBlur = 4; ctx!.globalAlpha = (1 - arrival) * 0.65; ctx!.stroke();
+      }
+    };
+    const routeFor = (from: string, to: string): Trace | undefined => {
+      const direct = traces.find(trace => trace.from === from && trace.to === to);
+      if (direct) return direct;
+      const queue: Array<{ node: string; segments: Trace[] }> = [{ node: from, segments: [] }];
+      const visited = new Set([from]);
+      while (queue.length) {
+        const current = queue.shift()!;
+        for (const trace of traces.filter(item => item.from === current.node)) {
+          if (visited.has(trace.to)) continue;
+          const segments = [...current.segments, trace];
+          if (trace.to === to) {
+            const points: Point[] = [];
+            segments.forEach(segment => points.push(...(points.length ? segment.points.slice(1) : segment.points)));
+            const distances = [0];
+            for (let i = 1; i < points.length; i++) distances.push(distances[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y));
+            return { from, to, points, distances, length: distances.at(-1)!, color: segments[0].color };
+          }
+          visited.add(trace.to);
+          queue.push({ node: trace.to, segments });
+        }
+      }
+      return undefined;
+    };
     function draw(now: number) {
       frame = requestAnimationFrame(draw);
       if (!visible || document.hidden) { previous = 0; return; }
@@ -109,6 +151,7 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
       if (moving) { elapsed += dt; eventAge += dt; } dirty = false;
       ctx!.clearRect(0, 0, width, height); ctx!.lineCap = "round"; ctx!.lineJoin = "round";
       const flow = runtimeFlow(state.activeEvent), idleStep = elapsed / 1.85;
+      let drewActiveRoute = false;
       traces.forEach((trace, index) => {
         ctx!.beginPath(); trace.points.forEach((p, i) => i ? ctx!.lineTo(p.x, p.y) : ctx!.moveTo(p.x, p.y));
         ctx!.lineWidth = 1; ctx!.strokeStyle = trace.color; ctx!.globalAlpha = 0.19; ctx!.shadowBlur = 0; ctx!.stroke();
@@ -118,27 +161,14 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
           ? trace.from === flow.from && trace.to === flow.to
           : !state.liveMode && !state.replaying && group[0] + Math.floor(idleAge) % group[1] === index;
         if (!active) return;
-        const cycle = flow ? (eventAge / Math.max(0.42, state.eventDuration / 1000)) % 1 : idleAge % 1;
-        const section = cycle;
-        if (section < 0 || section > 1) return;
-        const t = Math.min(1, section / 0.86), eased = t * t * t * (t * (t * 6 - 15) + 10), head = eased * trace.length;
-        const tail = Math.min(92, trace.length * 0.48), opacity = Math.min(1, section * 5) * Math.min(1, (1 - section) * 6);
-        ctx!.shadowColor = trace.color;
-        for (let s = 0; s < 30; s++) {
-          const d = head - tail + tail * s / 30; if (d < 0) continue;
-          const a = pointAt(trace, d), b = pointAt(trace, d + tail / 30 + 0.5);
-          ctx!.beginPath(); ctx!.moveTo(a.x, a.y); ctx!.lineTo(b.x, b.y);
-          ctx!.strokeStyle = s > 25 ? "#eaffff" : trace.color; ctx!.lineWidth = 1.2 + s / 30;
-          ctx!.shadowBlur = 8; ctx!.globalAlpha = (s / 30) ** 2 * opacity; ctx!.stroke();
-        }
-        const tip = pointAt(trace, head); ctx!.beginPath(); ctx!.arc(tip.x, tip.y, 2.3, 0, Math.PI * 2);
-        ctx!.fillStyle = "#f2ffff"; ctx!.shadowBlur = 13; ctx!.globalAlpha = opacity; ctx!.fill();
-        if (section > 0.7) {
-          const arrival = (section - 0.7) / 0.3, end = trace.points.at(-1)!;
-          ctx!.beginPath(); ctx!.arc(end.x, end.y, 4 + arrival * 21, 0, Math.PI * 2);
-          ctx!.lineWidth = 1; ctx!.strokeStyle = trace.color; ctx!.shadowBlur = 4; ctx!.globalAlpha = (1 - arrival) * 0.65; ctx!.stroke();
-        }
+        const section = flow ? (eventAge / Math.max(0.42, state.eventDuration / 1000)) % 1 : idleAge % 1;
+        if (section >= 0 && section <= 1) { drawPacket(trace, section); if (flow) drewActiveRoute = true; }
       });
+      if (flow && !drewActiveRoute) {
+        const route = routeFor(flow.from, flow.to);
+        const section = (eventAge / Math.max(0.42, state.eventDuration / 1000)) % 1;
+        if (route) drawPacket(route, section);
+      }
       ctx!.globalAlpha = 1; ctx!.shadowBlur = 0;
     }
     const intersection = new IntersectionObserver(entries => { visible = entries[0].isIntersecting; previous = 0; dirty = true; });
