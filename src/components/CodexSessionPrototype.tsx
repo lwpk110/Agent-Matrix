@@ -31,6 +31,7 @@ import { RuntimeParticles } from "./RuntimeParticles";
 import { RuntimeTelemetry } from "./RuntimeTelemetry";
 import { RuntimeLeafTopology, type LeafPreviewAnchor } from "./RuntimeLeafTopology";
 import { RuntimeResources } from "./RuntimeResources";
+import { runtimeFlow } from "./runtimeFlow";
 import type { RuntimeLeaf } from "./runtimeLeafModel";
 import type { LogEntry, RealSystemStatus, WsConnectionState } from "../types/matrix";
 import { createCodexRuntimeSessionFromLogs, latestObservedCodexEvent } from "./codexRuntimeAdapter";
@@ -361,6 +362,11 @@ export function CodexSessionPrototype({
   const activeStep = nodes.find((step) => step.id === selected);
   const currentEvent = replaying ? session.events[progress - 1] : undefined;
   const flowEvent = replaying ? currentEvent : liveMode ? latestObservedEvent : undefined;
+  const arrivalFlow = runtimeFlow(flowEvent);
+  const activeFlowNode = arrivalFlow?.from ?? flowEvent?.node;
+  const arrivalNode = flowEvent
+    ? arrivalFlow?.to ?? (["running", "waiting", "failed"].includes(flowEvent.status) ? flowEvent.node : undefined)
+    : undefined;
   const currentStage = !currentEvent ? undefined : currentEvent.node === "input" ? "input"
     : ["context", "prompt", "skill"].includes(currentEvent.node) ? "context"
     : currentEvent.node === "output" ? "output" : "model";
@@ -456,7 +462,11 @@ export function CodexSessionPrototype({
   const graphState = (id: StepId) =>
     [
       selected === id ? "is-selected" : "",
-      currentEvent?.node === id ? "is-active" : "",
+      currentEvent?.node === id || (!replaying && activeFlowNode === id) ? "is-active" : "",
+      activeFlowNode === id ? "is-flow-source" : "",
+      arrivalNode === id ? "is-flow-target" : "",
+      arrivalNode === id && flowEvent?.status === "waiting" ? "is-flow-warning" : "",
+      arrivalNode === id && flowEvent?.status === "failed" ? "is-flow-error" : "",
     ].join(" ");
   const correlate = (callId: string) => {
     setCallFilter(callId);
@@ -955,7 +965,7 @@ export function CodexSessionPrototype({
                   EXECUTION LOOP <span>执行与权限</span>
                 </div>
                 <div className="rt-hook-line">
-                  <button className={`${selected === "hook" ? "is-selected" : ""} ${currentEvent?.name === "PreToolUse" ? "is-active" : ""}`}
+                  <button className={`${graphState("hook")} ${currentEvent?.name === "PreToolUse" ? "is-active" : ""}`}
                     data-runtime-node="hook"
                     aria-label="查看执行前 Hook"
                     onClick={(event) => select("hook", event.currentTarget)}
@@ -1004,7 +1014,7 @@ export function CodexSessionPrototype({
                   </GraphNode>
                 </div>
                 <button
-                  className="rt-search-note"
+                  className={`rt-search-note ${graphState("search")}`}
                   data-runtime-node="search"
                   aria-label="查看搜索"
                   onClick={(event) => select("search", event.currentTarget)}

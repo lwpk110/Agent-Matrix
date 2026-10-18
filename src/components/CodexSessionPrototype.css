@@ -2554,6 +2554,69 @@
 .rt-node:after, .rt-gate:after, .rt-output:after { content: ''; position: absolute; inset: -2px; border: 1px solid #9de6ff20; border-radius: inherit; opacity: 0; pointer-events: none; }
 .rt-node:hover:after, .rt-node.is-active:after, .rt-gate:hover:after, .rt-gate.is-active:after, .rt-output:hover:after, .rt-output.is-active:after { animation: rt-node-ripple 1.8s ease-out infinite; }
 .rt-node.is-active, .rt-gate.is-active, .rt-output.is-active { filter: brightness(1.35); box-shadow: 0 0 32px #96cfff25, inset 0 0 25px #9dd4ff0e; }
+.rt-composer.is-flow-target:after,
+.rt-model.is-flow-target:after,
+.rt-search-note.is-flow-target:after,
+.rt-hook-line > button.is-flow-target:after,
+.rt-result.is-flow-target:after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 1px solid var(--rt-arrival-color, #78e9db);
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+}
+.rt-model.is-flow-target:after { border-radius: 50%; }
+.rt-node.is-flow-target:after,
+.rt-gate.is-flow-target:after,
+.rt-output.is-flow-target:after,
+.rt-composer.is-flow-target:after,
+.rt-model.is-flow-target:after,
+.rt-search-note.is-flow-target:after,
+.rt-hook-line > button.is-flow-target:after,
+.rt-result.is-flow-target:after { animation: rt-arrival-ripple 1.7s ease-out infinite; }
+.rt-node.is-flow-target,
+.rt-gate.is-flow-target,
+.rt-output.is-flow-target,
+.rt-composer.is-flow-target,
+.rt-model.is-flow-target,
+.rt-search-note.is-flow-target,
+.rt-hook-line > button.is-flow-target,
+.rt-result.is-flow-target {
+  --rt-arrival-color: #78e9db;
+  border-color: color-mix(in srgb, var(--rt-arrival-color) 62%, transparent);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--rt-arrival-color) 18%, transparent), inset 0 0 16px color-mix(in srgb, var(--rt-arrival-color) 5%, transparent);
+  animation: rt-arrival-glow 2.6s ease-in-out infinite;
+}
+.rt-node.is-flow-source,
+.rt-gate.is-flow-source,
+.rt-output.is-flow-source,
+.rt-composer.is-flow-source,
+.rt-model.is-flow-source,
+.rt-search-note.is-flow-source,
+.rt-hook-line > button.is-flow-source,
+.rt-result.is-flow-source {
+  --rt-arrival-color: #b1a0ff;
+  border-color: color-mix(in srgb, var(--rt-arrival-color) 48%, transparent);
+  animation: rt-arrival-glow 2.8s ease-in-out infinite;
+}
+.rt-node.is-flow-warning,
+.rt-gate.is-flow-warning,
+.rt-output.is-flow-warning,
+.rt-composer.is-flow-warning,
+.rt-model.is-flow-warning,
+.rt-search-note.is-flow-warning,
+.rt-hook-line > button.is-flow-warning,
+.rt-result.is-flow-warning { --rt-arrival-color: #ffd16f; }
+.rt-node.is-flow-error,
+.rt-gate.is-flow-error,
+.rt-output.is-flow-error,
+.rt-composer.is-flow-error,
+.rt-model.is-flow-error,
+.rt-search-note.is-flow-error,
+.rt-hook-line > button.is-flow-error,
+.rt-result.is-flow-error { --rt-arrival-color: #ff737c; }
 .rt-call-light { filter: drop-shadow(0 0 3px #9cdbff) drop-shadow(0 0 8px #9ba8ff); }
 .cp-runtime-prototype .rt-horizontal-beam,
 .cp-runtime-prototype .rt-call-path {
@@ -2570,6 +2633,43 @@
 @keyframes rt-core-breathe { 50% { filter: brightness(1.3); transform: scale(1.035); } }
 @keyframes rt-core-ring { to { transform: rotate(360deg); } }
 @keyframes rt-node-ripple { 0% { inset: -1px; opacity: .8; } 100% { inset: -13px; opacity: 0; } }
+@keyframes rt-arrival-ripple { 0% { inset: -1px; opacity: .74; } 100% { inset: -14px; opacity: 0; } }
+@keyframes rt-arrival-glow {
+  0%, 100% {
+    filter: brightness(1.02);
+    box-shadow: 0 0 15px color-mix(in srgb, var(--rt-arrival-color) 13%, transparent), inset 0 0 12px color-mix(in srgb, var(--rt-arrival-color) 4%, transparent);
+  }
+  50% {
+    filter: brightness(1.08);
+    box-shadow: 0 0 24px color-mix(in srgb, var(--rt-arrival-color) 23%, transparent), inset 0 0 18px color-mix(in srgb, var(--rt-arrival-color) 8%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rt-node.is-flow-target,
+  .rt-node.is-flow-source,
+  .rt-gate.is-flow-target,
+  .rt-gate.is-flow-source,
+  .rt-output.is-flow-target,
+  .rt-output.is-flow-source,
+  .rt-composer.is-flow-target,
+  .rt-composer.is-flow-source,
+  .rt-model.is-flow-target,
+  .rt-model.is-flow-source,
+  .rt-search-note.is-flow-target,
+  .rt-search-note.is-flow-source,
+  .rt-hook-line > button.is-flow-target,
+  .rt-hook-line > button.is-flow-source,
+  .rt-result.is-flow-target,
+  .rt-result.is-flow-source { animation: none; }
+  .rt-node.is-flow-target:after,
+  .rt-gate.is-flow-target:after,
+  .rt-output.is-flow-target:after,
+  .rt-composer.is-flow-target:after,
+  .rt-model.is-flow-target:after,
+  .rt-search-note.is-flow-target:after,
+  .rt-hook-line > button.is-flow-target:after,
+  .rt-result.is-flow-target:after { animation: none; opacity: .45; inset: -2px; }
+}
 .mx-session-overview > div {
   padding: 19px 23px;
   border-right: 1px solid #8db7df25;
