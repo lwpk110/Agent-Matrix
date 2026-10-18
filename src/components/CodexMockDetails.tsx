@@ -11,7 +11,7 @@ import {
   Terminal,
   PlugZap,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./CodexMockDetails.css";
 import {
   mockEventsForNode,
@@ -143,7 +143,7 @@ export function ModelIdentity({ session }: { session: MockRuntimeSession }) {
         <Cpu size={14} /><span>模型 <b>{session.model}</b></span>
       </span>
       <span className="mx-effort-chip">
-        <Gauge size={14} /><span>推理强度 <b>{session.isReal ? "未采集" : `高 · ${session.reasoningEffort}`}</b></span>
+        <Gauge size={14} /><span>推理强度 <b>{session.reasoningEffort === "未采集" ? "未采集" : session.reasoningEffort}</b></span>
       </span>
       <span className="mx-mock-label">{session.isReal ? "实时观测" : "模拟配置"}</span>
     </div>
@@ -282,6 +282,82 @@ function CallCard({
   );
 }
 
+function RuntimeStats({ events, calls }: { events: MockRuntimeEvent[]; calls: MockRuntimeSession["calls"] }) {
+  const names = calls.length
+    ? new Set(calls.map((call) => call.name.trim().toLocaleLowerCase()))
+    : new Set(events.map((event) => event.name));
+  const callNames = new Map<string, { name: string; count: number; failed: number }>();
+  calls.forEach((call) => {
+    const key = call.name.trim().toLocaleLowerCase() || call.title.toLocaleLowerCase();
+    const group = callNames.get(key) ?? { name: call.name || call.title, count: 0, failed: 0 };
+    group.count += 1;
+    if (call.status === "failed") group.failed += 1;
+    callNames.set(key, group);
+  });
+  return <>
+    <div className="mx-stat-grid mx-runtime-stats">
+      <span>关联事件<b>{events.length}</b></span>
+      <span>唯一名称<b>{names.size}</b></span>
+      <span>调用次数<b>{calls.length}</b></span>
+    </div>
+    {callNames.size > 0 && <div className="mx-call-counts" aria-label="按运行项统计调用次数">
+      {[...callNames.values()].map((group) => <div key={group.name}>
+        <code>{group.name}</code><strong>{group.count} 次</strong>{group.failed > 0 && <em>{group.failed} 次失败</em>}
+      </div>)}
+    </div>}
+  </>;
+}
+
+type SkillSource = {
+  scope: "project" | "global";
+  root: string;
+  path: string;
+  modifiedAt: string;
+  sizeBytes: number;
+  metadata: Record<string, string>;
+  rawMetadata: string;
+  content: string;
+};
+
+function SkillSourceDetails({ name, cwd }: { name: string; cwd: string }) {
+  const [sources, setSources] = useState<SkillSource[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    const query = new URLSearchParams({ name, cwd });
+    setLoading(true);
+    fetch(`/api/real/codex-skill?${query}`, { cache: "no-store" })
+      .then((response) => response.ok ? response.json() as Promise<{ sources: SkillSource[] }> : Promise.reject(new Error("Skill 文件查询失败")))
+      .then((result) => { if (active) setSources(result.sources); })
+      .catch(() => { if (active) setSources([]); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [name, cwd]);
+
+  return <section className="mx-skill-sources" aria-label={`${name} 的来源文件`}>
+    <div className="mx-skill-sources-heading"><strong>Skill 原始文件</strong><span>{loading ? "正在查找…" : `${sources.length} 个匹配来源`}</span></div>
+    {!loading && sources.length === 0 && <p className="mx-note">本机常见 Skill 目录中未找到对应文件。运行事件只记录了 Skill 名称，文件可能来自其他目录或远程环境。</p>}
+    {sources.map((source) => <article className="mx-skill-source" key={source.path}>
+      <div className="mx-skill-source-meta">
+        <span className={`mx-skill-scope is-${source.scope}`}>{source.scope === "project" ? "项目级" : "全局"}</span>
+        <code>{source.path}</code>
+      </div>
+      <div className="mx-skill-facts">
+        <span>文件大小 <b>{source.sizeBytes.toLocaleString()} B</b></span>
+        <span>修改时间 <b>{new Date(source.modifiedAt).toLocaleString()}</b></span>
+      </div>
+      {Object.keys(source.metadata).length > 0 && <dl className="mx-skill-frontmatter">
+        {Object.entries(source.metadata).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value || "（空）"}</dd></div>)}
+      </dl>}
+      <details className="mx-disclosure">
+        <summary>查看原始元数据与 SKILL.md 正文 <span>本机文件</span></summary>
+        {source.rawMetadata && <pre className="mx-skill-raw">{`---\n${source.rawMetadata}\n---`}</pre>}
+        <pre className="mx-skill-raw mx-skill-content">{source.content}</pre>
+      </details>
+    </article>)}
+  </section>;
+}
+
 export function downloadMockSession(session: MockRuntimeSession) {
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(session, null, 2)], { type: "application/json" }),
@@ -342,6 +418,7 @@ export function CodexMockDetails({
         <span>本节点 · 执行摘要</span>
         <p>{summaries[node]}</p>
       </div>
+      <RuntimeStats events={events} calls={calls} />
       {node === "input" && (
         <>
           <DataBlock label="用户实际输入（模拟会话）" value={session.prompt} />
@@ -584,6 +661,7 @@ function LiveRuntimeDetails({
   const calls = session.calls.filter((call) => nodeCallIds.has(call.id));
   const tokens = (value: number | null) => value === null ? "未采集" : value.toLocaleString();
   const summary = `${events.length} 条关联事件${calls.length ? ` · ${calls.length} 次关联调用` : ""}。详情仅呈现 Codex Hook / app-server 已观测字段。`;
+  const modelRequestCount = session.rolloutTelemetry?.modelRequestCount ?? (session.rounds.length || null);
   return (
     <div className="mx-node-details">
       <div className="mx-session-strip">
@@ -595,13 +673,14 @@ function LiveRuntimeDetails({
         <span>本节点 · 实时观测摘要</span>
         <p>{summary}</p>
       </div>
+      <RuntimeStats events={events} calls={calls} />
       {node === "input" && <>
         <DataBlock label="捕获到的用户输入" value={session.prompt || null} />
         <DataBlock label="运行环境字段" value={{ cwd: session.cwd, session_id: session.id, turn_id: session.turnId }} />
       </>}
       {node === "model" && <>
         <div className="mx-stat-grid">
-          <span>模型请求<b>{session.rounds.length ? session.rounds.length : "未采集"}</b></span>
+          <span>模型请求<b>{modelRequestCount ?? "未采集"}</b></span>
           <span>输入 token<b>{tokens(session.usage.inputTokens)}</b></span>
           <span>输出 token<b>{tokens(session.usage.outputTokens)}</b></span>
           <span>缓存输入 token<b>{tokens(session.usage.cachedInputTokens)}</b></span>
@@ -612,6 +691,7 @@ function LiveRuntimeDetails({
           <DataBlock label="可见响应字段" value={round.response || null} />
         </article>)}
       </>}
+      {node === "skill" && [...new Set(events.filter((event) => event.name === "SkillActivated").map((event) => String(event.input?.skillName || event.title.split(" · ").at(-1) || "")))].filter(Boolean).map((name) => <SkillSourceDetails key={name} name={name} cwd={session.cwd} />)}
       {(node === "tool" || node === "mcp" || node === "search") && calls.map((call) => <CallCard key={call.id} call={call} onCorrelate={onCorrelate} />)}
       {node === "output" && <DataBlock label="采集到的最终回答" value={session.finalAnswer || null} />}
       {events.length > 0 ? events.map((event) => <MockEventCard key={event.id} event={event} onCorrelate={onCorrelate} />)

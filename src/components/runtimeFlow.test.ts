@@ -22,3 +22,15 @@ test("MCP results flow back into the model, while starts flow out of the gate", 
   assert.deepEqual(runtimeFlow(start), { from: "gate", to: "mcp" });
   assert.deepEqual(runtimeFlow(finish), { from: "mcp", to: "model" });
 });
+
+test("real Codex runtime events animate only their observed transfer direction", () => {
+  const base = events[0];
+  const observed = (name: string, node: typeof base.node, status: typeof base.status) => ({ ...base, name, node, status });
+
+  assert.deepEqual(runtimeFlow(observed("AppServerCommandExecution", "tool", "running")), { from: "model", to: "tool" });
+  assert.deepEqual(runtimeFlow(observed("AppServerCommandExecution", "tool", "completed")), { from: "tool", to: "model" });
+  assert.deepEqual(runtimeFlow(observed("AppServerMcpToolCall", "mcp", "running")), { from: "model", to: "mcp" });
+  assert.deepEqual(runtimeFlow(observed("AppServerWebSearch", "search", "completed")), { from: "search", to: "model" });
+  assert.deepEqual(runtimeFlow(observed("SessionStart", "context", "completed")), undefined);
+  assert.deepEqual(runtimeFlow(observed("AppServerCommandExecution", "tool", "waiting")), undefined);
+});

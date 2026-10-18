@@ -10,7 +10,17 @@ export type RuntimeLeaf = {
   icon: string;
   eventId?: string;
   callId?: string;
+  count?: number;
 };
+
+function callGroups(calls: MockRuntimeSession["calls"][number][]) {
+  const groups = new Map<string, MockRuntimeSession["calls"]>();
+  for (const call of calls) {
+    const key = call.name.trim().toLocaleLowerCase() || call.title.trim().toLocaleLowerCase();
+    groups.set(key, [...(groups.get(key) ?? []), call]);
+  }
+  return [...groups.values()];
+}
 
 export const leafStatusLabels: Record<LeafStatus, string> = {
   available: "可用 · 未加载", loaded: "本轮已加载", completed: "已完成",
@@ -23,17 +33,19 @@ export function runtimeLeaves(node: MockNodeId, session: MockRuntimeSession, eve
     const statusOf = (status: MockRuntimeEvent["status"]): LeafStatus => status === "allowed" ? "completed"
       : status === "unknown" ? "waiting" : status;
     if (["tool", "mcp", "search"].includes(node)) {
-      const ids = [...new Set(events.filter(event => event.node === node && event.callId).map(event => event.callId!))];
-      return ids.map(id => {
-        const observed = events.filter(event => event.node === node && event.callId === id);
+      const visibleIds = new Set(events.filter(event => event.node === node && event.callId).map(event => event.callId!));
+      const observedCalls = session.calls.filter(call => visibleIds.has(call.id));
+      return callGroups(observedCalls).map(group => {
+        const latestCall = group.at(-1)!;
+        const ids = new Set(group.map(call => call.id));
+        const observed = events.filter(event => event.node === node && event.callId && ids.has(event.callId));
         const lastEvent = observed.at(-1)!;
-        const call = session.calls.find(item => item.id === id);
         return {
-          id, title: call?.title || lastEvent.title, name: call?.name || lastEvent.name,
-          summary: call?.resultReceived ? `${lastEvent.summary} 已采集到返回字段。` : lastEvent.summary,
-          status: statusOf(call?.status || lastEvent.status),
+          id: latestCall.name, title: latestCall.title || lastEvent.title, name: latestCall.name,
+          summary: `${latestCall.name} 共调用 ${group.length} 次。${latestCall.resultReceived ? `${lastEvent.summary} 已采集到返回字段。` : lastEvent.summary}`,
+          status: statusOf(latestCall.status || lastEvent.status), count: group.length,
           icon: node === "tool" ? "terminal" : node === "search" ? "search" : "network",
-          eventId: lastEvent.id, callId: id,
+          eventId: lastEvent.id, callId: latestCall.id,
         };
       });
     }
@@ -64,13 +76,28 @@ export function runtimeLeaves(node: MockNodeId, session: MockRuntimeSession, eve
       eventId: terminal?.id ?? observed.at(-1)?.id,
     };
   };
+  const groupedCallLeaf = (group: MockRuntimeSession["calls"][number][]): RuntimeLeaf => {
+    const observedIds = new Set(events.filter(event => event.callId).map(event => event.callId));
+    const visible = group.filter(call => observedIds.has(call.id));
+    const active = [...visible].reverse().find(call => callLeaf(call).status === "running");
+    const representative = active ?? visible.at(-1) ?? group.at(-1)!;
+    const base = callLeaf(representative);
+    const evidence = events.filter(event => event.callId && group.some(call => call.id === event.callId)).at(-1);
+    return {
+      ...base,
+      id: representative.name,
+      count: group.length,
+      summary: `${representative.name} 共调用 ${group.length} 次。${base.summary}`,
+      eventId: evidence?.id ?? base.eventId,
+    };
+  };
   switch (node) {
     case "skill": return session.skillCatalog.map(skill => {
       const event = events.find(event => event.name === "skill.reference.loaded" && event.input?.name === skill.id);
       return { ...skill, name: skill.id, summary: skill.description, status: event ? "loaded" : "available", eventId: event?.id };
     });
-    case "tool": return session.calls.filter(call => call.type === "local").map(callLeaf);
-    case "search": return session.calls.filter(call => call.id === "call_files_01" || call.id === "call_docs_04").map(callLeaf);
+    case "tool": return callGroups(session.calls.filter(call => call.type === "local")).map(groupedCallLeaf);
+    case "search": return callGroups(session.calls.filter(call => call.id === "call_files_01" || call.id === "call_docs_04")).map(groupedCallLeaf);
     case "mcp": return ["documentation", "browser"].map(server => {
       const calls = session.calls.filter(call => call.name.startsWith(`${server}.`));
       const observed = events.filter(event => calls.some(call => call.id === event.callId));

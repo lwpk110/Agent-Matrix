@@ -33,7 +33,9 @@ import { RuntimeLeafTopology, type LeafPreviewAnchor } from "./RuntimeLeafTopolo
 import { RuntimeResources } from "./RuntimeResources";
 import type { RuntimeLeaf } from "./runtimeLeafModel";
 import type { LogEntry, RealSystemStatus, WsConnectionState } from "../types/matrix";
-import { createCodexRuntimeSessionFromLogs } from "./codexRuntimeAdapter";
+import { createCodexRuntimeSessionFromLogs, latestObservedCodexEvent } from "./codexRuntimeAdapter";
+import { codexCoreStatus } from "./codexCoreStatus";
+import type { CodexRolloutTelemetry } from "../types/codexTelemetry";
 import "./RuntimeObservatory.css";
 import {
   createCodexRuntimeMock,
@@ -274,10 +276,64 @@ export function CodexSessionPrototype({
   const [progress, setProgress] = useState(Infinity);
   const [draft, setDraft] = useState(MOCK_USER_PROMPT);
   const [submitted, setSubmitted] = useState(MOCK_USER_PROMPT);
-  const liveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs), [logs]);
+  const observedLiveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs), [logs]);
+  const [rolloutTelemetry, setRolloutTelemetry] = useState<CodexRolloutTelemetry | null>(null);
+  useEffect(() => {
+    if (!observedLiveSession) {
+      setRolloutTelemetry(null);
+      return;
+    }
+    const sessionId = observedLiveSession.id;
+    const turnId = observedLiveSession.turnId;
+    let active = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const query = new URLSearchParams({ sessionId, turnId });
+        const response = await fetch(`/api/real/codex-rollout?${query}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Rollout telemetry unavailable");
+        const result = await response.json() as { telemetry: CodexRolloutTelemetry | null };
+        if (active) setRolloutTelemetry(result.telemetry);
+      } catch {
+        if (active) setRolloutTelemetry(null);
+      } finally {
+        pending = false;
+      }
+    };
+    setRolloutTelemetry(null);
+    void refresh();
+    const timer = window.setInterval(refresh, 4000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [observedLiveSession?.id, observedLiveSession?.turnId]);
+  const liveTelemetry = rolloutTelemetry?.sessionId === observedLiveSession?.id && rolloutTelemetry?.turnId === observedLiveSession?.turnId
+    ? rolloutTelemetry
+    : null;
+  const liveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs, liveTelemetry), [logs, liveTelemetry]);
   const demoSession = useMemo(() => createCodexRuntimeMock(submitted), [submitted]);
   const session = liveSession || demoSession;
   const liveMode = Boolean(liveSession);
+  const modelRequestCount = liveSession?.rolloutTelemetry?.modelRequestCount ?? session.rounds.length;
+  const latestObservedEvent = useMemo(() => liveSession ? latestObservedCodexEvent(liveSession, logs) : undefined, [liveSession, logs]);
+  const [statusClock, setStatusClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!liveMode) return;
+    const timer = window.setInterval(() => setStatusClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [liveMode]);
+  const coreStatus = useMemo(() => codexCoreStatus({
+    logs,
+    sessionId: session.id,
+    turnId: session.turnId,
+    connectionState,
+    realStatus,
+    telemetry: liveSession?.rolloutTelemetry,
+    now: statusClock,
+  }), [logs, session.id, session.turnId, connectionState, realStatus, liveSession?.rolloutTelemetry, statusClock]);
   const observedLocalCalls = session.calls.filter(call => call.type === "local").length;
   const observedMcpCalls = session.calls.filter(call => call.type === "mcp").length;
   const observedPermissions = session.events.filter(event => event.node === "gate").length;
@@ -304,12 +360,14 @@ export function CodexSessionPrototype({
   const mapRef = useRef<HTMLElement | null>(null);
   const activeStep = nodes.find((step) => step.id === selected);
   const currentEvent = replaying ? session.events[progress - 1] : undefined;
+  const flowEvent = replaying ? currentEvent : liveMode ? latestObservedEvent : undefined;
   const currentStage = !currentEvent ? undefined : currentEvent.node === "input" ? "input"
     : ["context", "prompt", "skill"].includes(currentEvent.node) ? "context"
     : currentEvent.node === "output" ? "output" : "model";
-  const eventDuration = Math.min(900, Math.max(140,
-    (session.events[progress]?.offsetMs ?? 0) - (currentEvent?.offsetMs ?? 0),
-  ));
+  const replayGap = (session.events[progress]?.offsetMs ?? 0) - (currentEvent?.offsetMs ?? 0);
+  const eventDuration = replaying
+    ? Math.min(1500, Math.max(420, replayGap))
+    : liveMode ? 1500 : 900;
   const visibleEvents = session.events.slice(0, progress);
   const filteredEvents = visibleEvents.filter(
     (event) =>
@@ -349,7 +407,7 @@ export function CodexSessionPrototype({
       (session.events[progress - 1]?.offsetMs || 0);
     const timer = window.setTimeout(
       () => setProgress((value) => value + 1),
-      Math.min(900, Math.max(140, gap)),
+      Math.min(1500, Math.max(420, gap)),
     );
     return () => window.clearTimeout(timer);
   }, [playing, progress, replaying, session]);
@@ -639,7 +697,7 @@ export function CodexSessionPrototype({
             ))}
           </nav>
           <ModelIdentity session={session} />
-          <RuntimeResources events={visibleEvents} session={session} onInspect={(node, source) => select(node, source)} onCorrelate={correlate} />
+          <RuntimeResources events={visibleEvents} logs={logs} session={session} onInspect={(node, source) => select(node, source)} onCorrelate={correlate} />
           <section
             className="rt-map"
             ref={mapRef}
@@ -665,9 +723,10 @@ export function CodexSessionPrototype({
             <RuntimeParticles
               host={mapRef}
               playing={playing}
-              activeEvent={currentEvent}
+              activeEvent={flowEvent}
               eventDuration={eventDuration}
               replaying={replaying}
+              liveMode={liveMode}
             />
             <div className="rt-map-bar">
               <span>
@@ -841,8 +900,10 @@ export function CodexSessionPrototype({
               <div className="rt-model-lane">
                 <button
                   className={`rt-model ${graphState("model")}`}
+                  data-core-state={coreStatus.state}
                   data-runtime-node="model"
-                  aria-label="查看模型调用循环"
+                  aria-label={`查看模型调用循环，${coreStatus.label}。${coreStatus.detail}`}
+                  title={`${coreStatus.label}：${coreStatus.detail}`}
                   onClick={(event) => select("model", event.currentTarget)}
                 >
                   <span className="rt-model-orbit rt-orbit-one" />
@@ -859,10 +920,12 @@ export function CodexSessionPrototype({
                   <span className="rt-model-center">
                     <Activity size={32} />
                     <strong>CODEX</strong>
-                    <small>MODEL RUNTIME</small>
+                    <small>{coreStatus.label}</small>
                   </span>
-                  <span className="rt-model-caption">
-                    <span className="rt-blink" />{liveMode ? `${session.rounds.length ? `${session.rounds.length} 次模型请求` : "模型请求数未采集"} · ${session.calls.length} 次调用` : "5 轮请求 · 6 次工具调用"}
+                  <span className={`rt-model-caption is-${coreStatus.state}`} role="status" aria-live="polite">
+                    <span className="rt-core-status-dot" />{coreStatus.state === "normal"
+                      ? liveMode ? `${modelRequestCount} 次模型请求 · ${session.calls.length} 次调用` : "5 轮请求 · 6 次工具调用"
+                      : coreStatus.label}
                   </span>
                 </button>
                 <div className="rt-model-decision">
@@ -997,7 +1060,7 @@ export function CodexSessionPrototype({
             <div>
               <span>MODEL ROUNDS</span>
               <strong>
-                {liveMode && !session.rounds.length ? "—" : session.rounds.length}
+                {modelRequestCount}
                 <small>{liveMode ? "已关联模型请求" : "轮模型请求"}</small>
               </strong>
             </div>

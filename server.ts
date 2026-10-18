@@ -13,6 +13,8 @@ import os from 'os';
 import fs from 'fs';
 import { CodexRuntimeEvent, correlateCodexRuntimeEvent, isLoopbackAddress, normalizeCodexHookPayload, reconcileCodexRuntimeHistory } from './src/services/codexRuntime';
 import { CodexAppServerMonitor } from './src/services/codexAppServer';
+import { readCodexRolloutTelemetry } from './src/services/codexRolloutTelemetry';
+import { readCodexSkillSources } from './src/services/codexSkillSources';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -450,6 +452,41 @@ app.get('/api/real/codex-events', (req, res) => {
   }
   res.setHeader('Cache-Control', 'no-store');
   res.json({ events: codexEventsHistory, retained: codexEventsHistory.length, journaled: true });
+});
+
+app.get('/api/real/codex-rollout', async (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    return res.status(403).json({ error: 'Codex telemetry is restricted to localhost' });
+  }
+  const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
+  const turnId = typeof req.query.turnId === 'string' ? req.query.turnId : undefined;
+  if (!sessionId || sessionId.length > 128 || (turnId && turnId.length > 128)) {
+    return res.status(400).json({ error: 'A valid sessionId is required' });
+  }
+  try {
+    const telemetry = await readCodexRolloutTelemetry(sessionId, turnId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ telemetry });
+  } catch {
+    res.status(200).json({ telemetry: null });
+  }
+});
+
+app.get('/api/real/codex-skill', (req, res) => {
+  const origin = req.get('origin');
+  const sameOrigin = !origin || (() => {
+    try { return new URL(origin).host === req.get('host'); } catch { return false; }
+  })();
+  if (!isLoopbackAddress(req.socket.remoteAddress) || !sameOrigin) {
+    return res.status(403).json({ error: 'Codex skill files are restricted to localhost' });
+  }
+  const name = typeof req.query.name === 'string' ? req.query.name : '';
+  const cwd = typeof req.query.cwd === 'string' && req.query.cwd.length <= 1024 && path.isAbsolute(req.query.cwd)
+    ? req.query.cwd
+    : process.cwd();
+  if (!name || name.length > 120) return res.status(400).json({ error: 'A valid skill name is required' });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ sources: readCodexSkillSources(name, cwd) });
 });
 
 app.delete('/api/real/codex-events', (req, res) => {

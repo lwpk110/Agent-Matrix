@@ -72,3 +72,31 @@ test("live leaf topology contains only observed runtime records", () => {
   assert.equal(leaves[0].status, "running");
   assert.equal(runtimeLeaves("skill", session, session.events).length, 0);
 });
+
+test("repeated calls for the same tool share one leaf with an accurate count", () => {
+  const timestamp = "2026-10-18T10:00:00.000Z";
+  const log: LogEntry = {
+    id: "live-call", timestamp, agentTag: "CODEX LIVE", agentColor: "cyan", category: "tool",
+    message: "AppServerToolCall",
+    runtimeEvent: {
+      provider: "codex", source: "codex-app-server", eventId: "live-event",
+      eventName: "AppServerToolCall", sessionId: "live-session", turnId: "live-turn",
+      toolUseId: "call-live", toolName: "repjs", phase: "started", timestamp,
+      hasToolResponse: false, details: JSON.stringify({ status: "inProgress" }),
+    },
+  };
+  const session = createCodexRuntimeSessionFromLogs([log])!;
+  const baseCall = session.calls[0];
+  const baseEvent = session.events[0];
+  const repeated = {
+    ...session,
+    calls: ["call-1", "call-2", "call-3"].map((id) => ({ ...baseCall, id, name: "repjs" })),
+    events: ["call-1", "call-2", "call-3"].map((callId, index) => ({ ...baseEvent, id: `event-${index}`, callId })),
+  };
+
+  const leaves = runtimeLeaves("tool", repeated, repeated.events);
+  assert.equal(leaves.length, 1);
+  assert.equal(leaves[0].name, "repjs");
+  assert.equal(leaves[0].count, 3);
+  assert.equal(leaves[0].callId, "call-3");
+});

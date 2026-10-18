@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { createCodexRuntimeMock, type MockNodeId } from "../codexRuntimeMock";
 import type { LogEntry } from "../../types/matrix";
-import { createCodexRuntimeSessionFromLogs } from "../codexRuntimeAdapter";
+import { createCodexRuntimeSessionFromLogs, latestObservedCodexEvent } from "../codexRuntimeAdapter";
 import { RUNTIME_EDGES, RUNTIME_NODES, type RuntimeNode } from "./model";
 import { glowTexture } from "../topology/visualAssets";
 import { createEnergyConduit } from "./energyConduit";
@@ -204,8 +204,10 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
   const demoSession = useMemo(() => createCodexRuntimeMock(), []);
   const session = liveSession || demoSession;
   const liveMode = Boolean(liveSession);
+  const latestObservedEvent = useMemo(() => liveSession ? latestObservedCodexEvent(liveSession, logs) : undefined, [liveSession, logs]);
   const selectedNode = selected ? nodeById.get(selected) : undefined;
   const currentEvent = traceReady ? session.events[progress] : undefined;
+  const visualEvent = replaying ? currentEvent : liveMode ? latestObservedEvent : currentEvent;
   const selectedEvents = selectedNode
     ? session.events
         .filter((event) => event.node === selectedNode.id || event.relatedNodes.includes(selectedNode.id))
@@ -224,8 +226,8 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
     const lastEvent = session.events.filter(event => event.node === node.id).at(-1);
     return lastEvent?.summary || "当前会话没有采集到此节点事件；拓扑位置表示运行阶段，不代表本回合实际执行。";
   };
-  const live = useRef({ selected, hovered, paused, autoRotate, view, currentEvent, playbackSpeed });
-  live.current = { selected, hovered, paused, autoRotate, view, currentEvent, playbackSpeed };
+  const live = useRef({ selected, hovered, paused, autoRotate, view, currentEvent: visualEvent, playbackSpeed, liveMode, replaying });
+  live.current = { selected, hovered, paused, autoRotate, view, currentEvent: visualEvent, playbackSpeed, liveMode, replaying };
 
   useEffect(() => {
     if (!replaying || paused) return;
@@ -237,7 +239,7 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
       session.events[progress + 1].offsetMs - session.events[progress].offsetMs;
     const timer = window.setTimeout(
       () => setProgress((value) => value + 1),
-      Math.max(65, Math.min(620, gap * 0.82) / playbackSpeed),
+      Math.min(1500, Math.max(420, gap * 0.82) / playbackSpeed),
     );
     return () => window.clearTimeout(timer);
   }, [progress, replaying, paused, playbackSpeed, session]);
@@ -500,6 +502,7 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
     let eventAge = 0;
     let eventId: string | undefined;
     const arrivals = new Map<MockNodeId, number>();
+    const arrivalCycles = new Map<string, number>();
     const nodeEnergy = new Map<MockNodeId, number>();
     RUNTIME_NODES.forEach((node) => nodeEnergy.set(node.id, 0));
     let frames = 0;
@@ -554,9 +557,11 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       const moving = !state.paused && !reducedMotion.matches;
-      if (eventId !== state.currentEvent?.id) {
-        eventId = state.currentEvent?.id;
+      const eventKey = state.currentEvent ? `${state.currentEvent.id}:${state.currentEvent.status}` : undefined;
+      if (eventId !== eventKey) {
+        eventId = eventKey;
         eventAge = state.paused && state.currentEvent ? 0.45 : 0;
+        arrivalCycles.clear();
       }
       if (moving) { elapsed += dt; eventAge += dt; }
       controls.autoRotate =
@@ -645,7 +650,8 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
       }
       const flow = runtimeFlow(state.currentEvent);
       const nextEvent = state.currentEvent && session.events[session.events.indexOf(state.currentEvent) + 1];
-      const duration = Math.max(65, Math.min(620, ((nextEvent?.offsetMs ?? 0) - (state.currentEvent?.offsetMs ?? 0)) * 0.82) / state.playbackSpeed) / 1000;
+      const duration = state.liveMode && !state.replaying ? 1.5
+        : Math.min(1500, Math.max(420, ((nextEvent?.offsetMs ?? 0) - (state.currentEvent?.offsetMs ?? 0)) * 0.82) / state.playbackSpeed) / 1000;
       const pulseStep = elapsed / 1.85;
       let activePackets = 0;
       for (const item of lines) {
@@ -666,20 +672,25 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
         );
         const group = item.phase < 4 ? [0, 4] : item.phase < 8 ? [4, 4] : [8, lines.length - 8];
         const idleAge = pulseStep + group[0] * 0.23;
-        const active = state.currentEvent
+        const active = flow
           ? hot
-          : group[0] + Math.floor(idleAge) % group[1] === item.phase;
-        const rawProgress = state.currentEvent ? eventAge / duration : idleAge % 1;
-        const eased = Math.min(1, rawProgress / 0.82);
-        const pulseProgress = eased * eased * (3 - 2 * eased);
+          : !state.liveMode && !state.currentEvent && group[0] + Math.floor(idleAge) % group[1] === item.phase;
+        const rawProgress = state.currentEvent ? (eventAge / duration) % 1 : idleAge % 1;
+        const eased = Math.min(1, rawProgress / 0.86);
+        const pulseProgress = eased * eased * eased * (eased * (eased * 6 - 15) + 10);
         if (active && moving && rawProgress < 1) activePackets++;
         const trimStart = Math.min(0.28, (item.edge.from === "model" ? 2.7 : 1.6) / item.curve.getLength());
         const trimEnd = 1 - Math.min(0.28, (item.edge.to === "model" ? 2.7 : 1.6) / item.curve.getLength());
         item.curve.getPoint(trimStart + pulseProgress * (trimEnd - trimStart), item.packet.position);
-        (item.packet.material as THREE.SpriteMaterial).opacity = active && !reducedMotion.matches && rawProgress < 1 ? Math.min(1, rawProgress * 12) * Math.min(1, (1 - rawProgress) * 8) * (focused ? 1 : 0.08) : 0;
-        if (active && moving && rawProgress > 0.76 && rawProgress < 0.84) arrivals.set(item.edge.to, elapsed);
+        (item.packet.material as THREE.SpriteMaterial).opacity = active && !reducedMotion.matches ? Math.min(1, rawProgress * 5) * Math.min(1, (1 - rawProgress) * 6) * (focused ? 1 : 0.08) : 0;
+        const edgeId = `${item.edge.from}:${item.edge.to}`;
+        const pulseCycle = Math.floor(eventAge / duration);
+        if (active && moving && rawProgress > 0.82 && rawProgress < 0.9 && arrivalCycles.get(edgeId) !== pulseCycle) {
+          arrivals.set(item.edge.to, elapsed);
+          arrivalCycles.set(edgeId, pulseCycle);
+        }
         item.trace.update(
-          item.curve, camera, pulseProgress, active && rawProgress < 1 && !reducedMotion.matches, item.energy,
+          item.curve, camera, pulseProgress, active && !reducedMotion.matches, item.energy,
           item.edge.from === "model" ? 2.7 : 1.6,
           item.edge.to === "model" ? 2.7 : 1.6,
           mount.clientWidth, mount.clientHeight,

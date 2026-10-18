@@ -11,8 +11,8 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:topology": "node --import tsx --test src/components/topology/model.test.ts",
-    "test:codex-runtime": "node --import tsx --test src/services/codexRuntime.test.ts src/services/codexAppServer.test.ts src/services/runtimeLogBuffer.test.ts src/components/CodexRuntimePage.test.tsx",
-    "test:codex-prototype": "node --import tsx --test src/components/codexRuntimeMock.test.ts src/components/codexRuntimeAdapter.test.ts src/components/runtimeFlow.test.ts src/components/runtimeLeafModel.test.ts src/components/runtimeResourcesModel.test.ts"
+    "test:codex-runtime": "node --import tsx --test src/services/codexRuntime.test.ts src/services/codexAppServer.test.ts src/services/runtimeLogBuffer.test.ts src/services/codexRolloutTelemetry.test.ts src/components/CodexRuntimePage.test.tsx",
+    "test:codex-prototype": "node --import tsx --test src/components/codexRuntimeMock.test.ts src/components/codexRuntimeAdapter.test.ts src/components/codexCoreStatus.test.ts src/components/promptQueueModel.test.ts src/components/runtimeFlow.test.ts src/components/runtimeLeafModel.test.ts src/components/runtimeResourcesModel.test.ts src/services/codexSkillSources.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

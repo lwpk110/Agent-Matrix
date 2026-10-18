@@ -25,12 +25,12 @@ function rounded(points: Point[]) {
 }
 
 /** Routed energy packets: quiet conduits, a luminous head, and a short fading tail. */
-export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 900, replaying = false }: {
-  host: RefObject<HTMLElement | null>; playing: boolean; activeEvent?: MockRuntimeEvent; eventDuration?: number; replaying?: boolean;
+export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 900, replaying = false, liveMode = false }: {
+  host: RefObject<HTMLElement | null>; playing: boolean; activeEvent?: MockRuntimeEvent; eventDuration?: number; replaying?: boolean; liveMode?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const live = useRef({ playing, activeEvent, eventDuration, replaying });
-  live.current = { playing, activeEvent, eventDuration, replaying };
+  const live = useRef({ playing, activeEvent, eventDuration, replaying, liveMode });
+  live.current = { playing, activeEvent, eventDuration, replaying, liveMode };
   useEffect(() => {
     const element = host.current, surface = canvas.current, ctx = surface?.getContext("2d");
     if (!element || !surface || !ctx) return;
@@ -68,6 +68,8 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
       add("prompt", "model", (a, b) => width <= 600 ? [{ x: a.right, y: a.y }, { x: width - 8, y: a.y }, { x: width - 8, y: b.y - 38 }, { x: b.right, y: b.y - 38 }] : [{ x: a.x, y: a.bottom }, { x: a.x, y: a.bottom + 23 }, { x: b.x, y: a.bottom + 23 }, { x: b.x, y: b.top }]);
       add("skill", "model", across, "#bca8f7"); add("model", "hook", across);
       add("hook", "gate", down, "#dfc18a"); add("gate", "tool", down, "#dfc18a"); add("gate", "mcp", down, "#dfc18a");
+      add("model", "tool", across); add("model", "mcp", across);
+      add("search", "model", across, "#bca8f7");
       ["tool", "mcp"].forEach(id => add(id, "result", (a, b) => {
         const left = id === "tool", side = left ? a.left - 9 : a.right + 9;
         return [{ x: a.x, y: a.bottom }, { x: a.x, y: a.bottom + 8 }, { x: side, y: a.bottom + 8 }, { x: side, y: b.y }, { x: left ? b.left : b.right, y: b.y }];
@@ -100,7 +102,8 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
       if (now - previous < 30) return;
       const dt = previous ? Math.min((now - previous) / 1000, 0.06) : 0; previous = now;
       const state = live.current;
-      if (eventId !== state.activeEvent?.id) { eventId = state.activeEvent?.id; eventAge = 0; dirty = true; }
+      const eventKey = state.activeEvent ? `${state.activeEvent.id}:${state.activeEvent.status}` : undefined;
+      if (eventId !== eventKey) { eventId = eventKey; eventAge = 0; dirty = true; }
       const moving = state.playing && !media.matches;
       if (!moving && !dirty) return;
       if (moving) { elapsed += dt; eventAge += dt; } dirty = false;
@@ -109,16 +112,17 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
       traces.forEach((trace, index) => {
         ctx!.beginPath(); trace.points.forEach((p, i) => i ? ctx!.lineTo(p.x, p.y) : ctx!.moveTo(p.x, p.y));
         ctx!.lineWidth = 1; ctx!.strokeStyle = trace.color; ctx!.globalAlpha = 0.19; ctx!.shadowBlur = 0; ctx!.stroke();
-        const returning = flow?.to === "model" && (flow.from === "tool" || flow.from === "mcp");
         const group = index < 3 ? [0, 3] : index < 8 ? [3, 5] : [8, traces.length - 8];
         const idleAge = idleStep + group[0] * 0.23;
-        const active = state.replaying ? Boolean(flow && (returning ? (trace.from === flow.from && trace.to === "result") || trace.from === "result" && trace.to === "model" : trace.from === flow.from && trace.to === flow.to)) : group[0] + Math.floor(idleAge) % group[1] === index;
+        const active = flow
+          ? trace.from === flow.from && trace.to === flow.to
+          : !state.liveMode && !state.replaying && group[0] + Math.floor(idleAge) % group[1] === index;
         if (!active) return;
-        const cycle = state.replaying ? eventAge / Math.max(0.12, state.eventDuration / 1000) : idleAge % 1;
-        const section = returning ? (trace.to === "result" ? cycle * 2 : cycle * 2 - 1) : cycle;
+        const cycle = flow ? (eventAge / Math.max(0.42, state.eventDuration / 1000)) % 1 : idleAge % 1;
+        const section = cycle;
         if (section < 0 || section > 1) return;
-        const t = Math.min(1, section / 0.8), head = t * t * (3 - 2 * t) * trace.length;
-        const tail = Math.min(76, trace.length * 0.44), opacity = Math.min(1, section * 14) * Math.min(1, (1 - section) * 10);
+        const t = Math.min(1, section / 0.86), eased = t * t * t * (t * (t * 6 - 15) + 10), head = eased * trace.length;
+        const tail = Math.min(92, trace.length * 0.48), opacity = Math.min(1, section * 5) * Math.min(1, (1 - section) * 6);
         ctx!.shadowColor = trace.color;
         for (let s = 0; s < 30; s++) {
           const d = head - tail + tail * s / 30; if (d < 0) continue;

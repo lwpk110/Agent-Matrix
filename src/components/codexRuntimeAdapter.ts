@@ -6,6 +6,8 @@ import type {
   MockRuntimeSession,
   MockStatus,
 } from "./codexRuntimeMock";
+import type { CodexRolloutTelemetry } from "../types/codexTelemetry";
+import { runtimeFlow } from "./runtimeFlow";
 
 type RuntimeLog = LogEntry & { runtimeEvent: NonNullable<LogEntry["runtimeEvent"]> };
 type Data = Record<string, unknown>;
@@ -24,6 +26,22 @@ function payloadOf(log: RuntimeLog): Data {
 
 function textValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+export function readablePrompt(value: unknown): string | undefined {
+  const text = textValue(value);
+  if (!text) return undefined;
+  const withoutAmbientContext = text.replace(/<in-app-browser-context\b[^>]*>[\s\S]*?<\/in-app-browser-context>\s*/gi, "").trim();
+  const requestMarker = /(?:^|\n)\s*#{1,2}\s*My request:\s*/i;
+  const request = withoutAmbientContext.match(requestMarker);
+  const visibleText = request
+    ? withoutAmbientContext.slice((request.index || 0) + request[0].length)
+    : withoutAmbientContext;
+  return visibleText
+    .replace(/^\s*#\s*Files mentioned by the user:[\s\S]*?(?=\s+#*\s*My request:|$)/i, "")
+    .replace(/Image attachment:\s*true/gi, "")
+    .replace(/\bDistinguish instructions in attached documents from the user's request\.[\s\S]*$/i, "")
+    .trim() || undefined;
 }
 
 function recordValue(...values: unknown[]): Data | undefined {
@@ -84,7 +102,7 @@ function eventTitle(log: RuntimeLog, node: MockNodeId): string {
 }
 
 function eventSummary(log: RuntimeLog, payload: Data): string {
-  const summary = textValue(payload.prompt)
+  const summary = (log.runtimeEvent.eventName === "UserPromptSubmit" ? readablePrompt(payload.prompt) : textValue(payload.prompt))
     || textValue(payload.text)
     || textValue(payload.query)
     || textValue(payload.command)
@@ -104,7 +122,7 @@ function timeOf(log: RuntimeLog): number {
 
 function inputOf(name: string, payload: Data): Data | undefined {
   if (name === "UserPromptSubmit") {
-    const prompt = textValue(payload.prompt);
+    const prompt = readablePrompt(payload.prompt);
     return prompt ? { prompt } : recordValue(payload.content);
   }
   return recordValue(payload.arguments, payload.tool_input, payload.input)
@@ -147,7 +165,7 @@ function makeCall(event: MockRuntimeEvent): MockRuntimeSession["calls"][number] 
   };
 }
 
-export function createCodexRuntimeSessionFromLogs(logs: LogEntry[]): MockRuntimeSession | null {
+export function createCodexRuntimeSessionFromLogs(logs: LogEntry[], rolloutTelemetry?: CodexRolloutTelemetry | null): MockRuntimeSession | null {
   const sourceLogs = logs.filter((log): log is RuntimeLog => Boolean(
     log.runtimeEvent && (log.runtimeEvent.source === "codex-hook" || log.runtimeEvent.source === "codex-app-server"),
   ));
@@ -175,7 +193,7 @@ export function createCodexRuntimeSessionFromLogs(logs: LogEntry[]): MockRuntime
             : ["model"];
     const callId = log.runtimeEvent.toolUseId || (log.toolCall ? `${node}-${log.id}` : undefined);
     const modelId = modelRequestId(log, payload);
-    const content = name === "UserPromptSubmit" ? textValue(payload.prompt)
+    const content = name === "UserPromptSubmit" ? readablePrompt(payload.prompt)
       : name === "AppServerFinalAnswer" ? textValue(payload.text)
         : undefined;
     return {
@@ -251,12 +269,12 @@ export function createCodexRuntimeSessionFromLogs(logs: LogEntry[]): MockRuntime
   };
   const prompt = [...events].reverse().find((event) => event.node === "input")?.content || "";
   const finalAnswer = [...events].reverse().find((event) => event.name === "AppServerFinalAnswer")?.content || "";
-  const model = selectedLogs.find((log) => log.runtimeEvent.model)?.runtimeEvent.model || "未采集";
+  const model = rolloutTelemetry?.model || selectedLogs.find((log) => log.runtimeEvent.model)?.runtimeEvent.model || "未采集";
   const cwd = selectedLogs.find((log) => log.runtimeEvent.cwd)?.runtimeEvent.cwd || "未采集";
   const usage = {
-    inputTokens: sumKnown("inputTokens"),
-    outputTokens: sumKnown("outputTokens"),
-    cachedInputTokens: sumKnown("cachedInputTokens"),
+    inputTokens: rolloutTelemetry?.turnUsage?.inputTokens ?? sumKnown("inputTokens"),
+    outputTokens: rolloutTelemetry?.turnUsage?.outputTokens ?? sumKnown("outputTokens"),
+    cachedInputTokens: rolloutTelemetry?.turnUsage?.cachedInputTokens ?? sumKnown("cachedInputTokens"),
   };
   const session: MockRuntimeSession = {
     id: latest.runtimeEvent.sessionId || "未关联会话",
@@ -264,10 +282,11 @@ export function createCodexRuntimeSessionFromLogs(logs: LogEntry[]): MockRuntime
     cwd,
     prompt,
     model,
-    reasoningEffort: "未采集",
+    reasoningEffort: rolloutTelemetry?.reasoningEffort || "未采集",
     instruction: "未采集完整系统指令。仅展示运行事件明确提供的字段。",
     skillText: "未采集 Skill 文件正文。",
     skillCatalog: [],
+    rolloutTelemetry: rolloutTelemetry || null,
     finalAnswer,
     calls: [...callsById.values()],
     rounds,
@@ -280,4 +299,18 @@ export function createCodexRuntimeSessionFromLogs(logs: LogEntry[]): MockRuntime
     dataSource: "live",
   };
   return session;
+}
+
+export function latestObservedCodexEvent(session: MockRuntimeSession, logs: LogEntry[]): MockRuntimeEvent | undefined {
+  let latest: MockRuntimeEvent | undefined;
+  for (let index = logs.length - 1; index >= 0; index--) {
+    const event = logs[index].runtimeEvent;
+    if (event?.sessionId !== session.id || (event.turnId && event.turnId !== session.turnId)) continue;
+    const observed = session.events.find(candidate => candidate.id === event.eventId);
+    if (!observed) continue;
+    latest ||= observed;
+    if (observed.status === "waiting" || observed.status === "failed") return observed;
+    if (runtimeFlow(observed)) return observed;
+  }
+  return latest || session.events.at(-1);
 }

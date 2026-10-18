@@ -1,6 +1,8 @@
 /** A deterministic, fictional session for the interactive product prototype.
  * Events use a product-level schema; these are not captured Codex wire messages.
  */
+import type { CodexRolloutTelemetry } from "../types/codexTelemetry";
+
 export type MockNodeId =
   | "input"
   | "context"
@@ -830,6 +832,7 @@ export type MockRuntimeSession = Omit<ReturnType<typeof createCodexRuntimeMock>,
   calls: RuntimeCall[];
   durationMs: number | null;
   skillCatalog: readonly { id: string; title: string; description: string; icon: string }[];
+  rolloutTelemetry?: CodexRolloutTelemetry | null;
 };
 export function mockEventsForNode(
   session: MockRuntimeSession,

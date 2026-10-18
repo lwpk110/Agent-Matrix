@@ -1,17 +1,20 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Activity, ArrowUpRight, ChevronDown, Database, Layers3, Library, X, Zap } from "lucide-react";
+import { Activity, ArrowUpRight, ChevronDown, Database, Layers3, Library, MessageSquareText, X, Zap } from "lucide-react";
 import type { MockNodeId, MockRuntimeEvent, MockRuntimeSession } from "./codexRuntimeMock";
 import { MockEventCard } from "./CodexMockDetails";
 import { runtimeResources } from "./runtimeResourcesModel";
+import { promptTraces } from "./promptQueueModel";
+import type { LogEntry } from "../types/matrix";
 import "./RuntimeResources.css";
 
-type Resource = "usage" | "context" | "memory" | "capabilities";
-const labels: Record<Resource, string> = { usage: "Token 用量", context: "当前上下文", memory: "记忆", capabilities: "能力与控制" };
+type Resource = "usage" | "context" | "memory" | "capabilities" | "prompts";
+const labels: Record<Resource, string> = { usage: "Token 用量", context: "当前上下文", memory: "记忆", capabilities: "能力与控制", prompts: "提示词监控" };
 const colors = ["#83dce7", "#e5c98b", "#9dacf5", "#8ed9b9", "#d2a3ef", "#6791ad"];
 const fmt = (n: number | null) => n === null ? "—" : n.toLocaleString("en-US");
 
-export function RuntimeResources({ events, session, onInspect, onCorrelate }: {
+export function RuntimeResources({ events, logs, session, onInspect, onCorrelate }: {
   events: MockRuntimeEvent[];
+  logs: LogEntry[];
   session: MockRuntimeSession;
   onInspect: (node: MockNodeId, source: HTMLButtonElement) => void;
   onCorrelate: (callId: string) => void;
@@ -39,20 +42,33 @@ export function RuntimeResources({ events, session, onInspect, onCorrelate }: {
     else if (!expanded && panel.open) panel.close();
   }, [expanded]);
   if (session.isReal) {
-    const total = session.usage.inputTokens !== null && session.usage.outputTokens !== null
-      ? fmt(session.usage.inputTokens + session.usage.outputTokens) : "未采集";
+    const rollout = session.rolloutTelemetry;
+    const total = rollout?.turnUsage?.totalTokens !== null && rollout?.turnUsage?.totalTokens !== undefined
+      ? fmt(rollout.turnUsage.totalTokens)
+      : session.usage.inputTokens !== null && session.usage.outputTokens !== null
+        ? fmt(session.usage.inputTokens + session.usage.outputTokens) : "未采集";
+    const contextTokens = rollout?.latestRequest?.inputTokens ?? null;
+    const contextWindow = rollout?.contextWindowTokens ?? null;
+    const contextPercent = contextTokens !== null && contextWindow
+      ? Math.min(100, contextTokens / contextWindow * 100)
+      : null;
+    const traces = promptTraces(logs, session.id);
+    const processingCount = traces.filter(trace => trace.status === "processing").length;
+    const receivedCount = traces.filter(trace => trace.status === "received").length;
     const resourceCards = [
-      { key: "usage" as const, icon: Zap, value: total, unit: "tokens", note: `${session.rounds.length} 条模型请求记录` },
-      { key: "context" as const, icon: Layers3, value: String(events.filter(event => event.node === "context").length), unit: "上下文事件", note: "容量与分段未采集" },
+      { key: "usage" as const, icon: Zap, value: total, unit: "本轮 tokens", note: `${rollout?.modelRequestCount ?? session.rounds.length} 次模型响应` },
+      { key: "context" as const, icon: Layers3, value: contextPercent === null ? "—" : `${contextPercent.toFixed(1)}%`, unit: "窗口占用", note: contextTokens !== null && contextWindow ? `${fmt(contextTokens)} / ${fmt(contextWindow)} tokens · 最近请求` : `${events.filter(event => event.node === "context").length} 条上下文事件 · 容量未采集` },
       { key: "memory" as const, icon: Database, value: "未采集", unit: "记忆", note: "当前数据源未提供记忆快照" },
       { key: "capabilities" as const, icon: Library, value: `${session.calls.length}`, unit: "已观测调用", note: "按真实调用事件统计" },
+      { key: "prompts" as const, icon: MessageSquareText, value: `${traces.length}`, unit: "条提示词记录", note: `${receivedCount} 已接收 · ${processingCount} 处理中 · 排队深度未观测` },
     ];
     const liveEvidence = expanded === "usage" ? events.filter(event => event.roundId || /model/i.test(event.name))
       : expanded === "context" ? events.filter(event => event.node === "context")
-        : expanded === "capabilities" ? events.filter(event => ["tool", "mcp", "search", "gate", "hook", "skill"].includes(event.node)) : [];
+        : expanded === "capabilities" ? events.filter(event => ["tool", "mcp", "search", "gate", "hook", "skill"].includes(event.node))
+          : expanded === "prompts" ? events.filter(event => event.node === "input") : [];
     return <section className="rr" aria-label="本回合资源概览">
       <header className="rr-heading"><span><Activity size={13} /> 本回合资源 <small>仅显示已采集字段</small></span><span className="rr-mock">LIVE · CODEX</span></header>
-      <div className="rr-cards">{resourceCards.map(({ key, icon: Icon, value, unit, note }, index) => <button key={key} id={`${id}-${key}`} className={`rr-card ${expanded === key ? "is-open" : ""}`}
+      <div className="rr-cards rr-cards-live">{resourceCards.map(({ key, icon: Icon, value, unit, note }, index) => <button key={key} id={`${id}-${key}`} className={`rr-card ${expanded === key ? "is-open" : ""}`}
         style={{ "--rr-accent": colors[index] } as CSSProperties} aria-expanded={expanded === key} aria-controls={`${id}-panel`}
         onClick={() => setExpanded(expanded === key ? null : key)}>
         <span className="rr-card-label"><Icon size={15} />{labels[key]}<ChevronDown size={13} /></span>
@@ -61,10 +77,18 @@ export function RuntimeResources({ events, session, onInspect, onCorrelate }: {
       <dialog ref={panelRef} className="rr-panel" id={`${id}-panel`} aria-labelledby={`${id}-${expanded ?? "usage"}`}
         onClose={() => setExpanded(null)} onClick={event => { if (event.target === event.currentTarget) panelRef.current?.close(); }}>
         {expanded && <><header><div><span className="rr-kicker">LIVE RESOURCE INSPECTOR</span><h3 id={`${id}-${expanded}`}>{labels[expanded]}</h3></div><button className="rr-close" aria-label="收起资源详情" onClick={() => panelRef.current?.close()}><X size={16} /></button></header>
-          <p className="rr-lead">数据来源：本机 Codex Hook / app-server。未观测到的字段保留为“未采集”。</p>
-          {expanded === "usage" && <div className="rr-metrics"><div><span>输入 token</span><strong>{fmt(session.usage.inputTokens)}</strong></div><div><span>输出 token</span><strong>{fmt(session.usage.outputTokens)}</strong></div><div><span>缓存输入 token</span><strong>{fmt(session.usage.cachedInputTokens)}</strong></div><div><span>推理强度</span><strong>未采集</strong></div></div>}
-          {expanded === "context" && <p className="rr-explain">已采集 {events.filter(event => event.node === "context").length} 条上下文相关事件；上下文容量、组成分段和记忆内容未由当前数据源提供。</p>}
+          <p className="rr-lead">数据来源：{expanded === "usage" || expanded === "context" ? "本机 Codex rollout 回执与 Hook / app-server 事件" : "本机 Codex Hook / app-server 事件"}。未观测到的字段保留为“未采集”。</p>
+          {expanded === "usage" && <><div className="rr-metrics"><div><span>本轮输入 token</span><strong>{fmt(session.usage.inputTokens)}</strong></div><div><span>本轮输出 token</span><strong>{fmt(session.usage.outputTokens)}</strong></div><div><span>缓存输入 token</span><strong>{fmt(session.usage.cachedInputTokens)}</strong></div><div><span>推理 token</span><strong>{fmt(rollout?.turnUsage?.reasoningTokens ?? null)}</strong></div></div><p className="rr-explain">推理强度：{session.reasoningEffort}。用量来自本机 Codex 回合回执；缓存输入是输入 token 的子集。</p></>}
+          {expanded === "context" && <>{contextPercent !== null ? <><div className="rr-subhead"><strong>最近一次模型请求</strong><span>{fmt(contextTokens)} / {fmt(contextWindow)} tokens · {contextPercent.toFixed(1)}%</span></div><div className="rr-context-track" role="img" aria-label={`上下文窗口占用 ${contextPercent.toFixed(1)}%，${fmt(contextTokens)} / ${fmt(contextWindow)} tokens`}><i style={{ width: `${contextPercent}%`, background: colors[2] }} /></div><p className="rr-explain">占用量和窗口容量来自 Codex 本机回执。系统指令、对话、工具结果等内容分段及记忆快照未由当前数据源提供。</p></> : <p className="rr-explain">已采集 {events.filter(event => event.node === "context").length} 条上下文相关事件；最近请求 token 数和上下文窗口容量尚未采集。</p>}</>}
           {expanded === "memory" && <p className="rr-explain">未采集到记忆快照，无法据此判断记忆是否存在或是否写入。</p>}
+          {expanded === "prompts" && <>
+            <div className="rr-prompt-status"><div><span>已接收</span><strong>{traces.length}</strong></div><div><span>处理中</span><strong>{processingCount}</strong></div><div><span>等待后续事件</span><strong>{receivedCount}</strong></div><div><span>实际排队深度</span><strong>未观测</strong></div></div>
+            <p className="rr-explain">状态由本机 Codex 提示词、工具执行和最终回复事件推导。当前数据源没有提供独立的排队 / 出队信号；“等待后续事件”表示暂未看到执行事件，不等同于已确认进入队列。</p>
+            <div className="rr-prompt-list">{traces.map(trace => <article key={trace.id}>
+              <header><span className={`rr-prompt-state is-${trace.status}`}>{trace.status === "completed" ? "已完成" : trace.status === "processing" ? "处理中" : "已接收"}</span><time>{new Date(trace.timestamp).toLocaleString("zh-CN", { hour12: false })}</time></header>
+              <p>{trace.prompt}</p><small>回合 {trace.turnId.slice(0, 12)} · 依据 {trace.evidence}</small>
+            </article>)}{!traces.length && <p className="rr-empty">当前会话尚未观测到提示词提交事件。</p>}</div>
+          </>}
           {expanded === "capabilities" && <div className="rr-capabilities">{(["skill", "mcp", "tool", "hook", "gate"] as const).map((node, index) => <button key={node} onClick={event => onInspect(node, event.currentTarget)} style={{ "--rr-accent": colors[index] } as CSSProperties}><span>{node.toUpperCase()}<ArrowUpRight size={13} /></span><strong>{events.filter(item => item.node === node).length} 条事件</strong><small>{node === "tool" || node === "mcp" ? `${session.calls.filter(call => node === "mcp" ? call.type === "mcp" : call.type === "local").length} 次关联调用` : "仅计入已观测记录"}</small></button>)}</div>}
           <details className="rr-evidence" open><summary>事件依据 <span>{liveEvidence.length} 条</span></summary>{liveEvidence.map(event => <MockEventCard key={event.id} event={event} onCorrelate={onCorrelate} />)}{!liveEvidence.length && <p className="rr-empty">没有采集到相关事件。</p>}</details>
         </>}
@@ -73,7 +97,7 @@ export function RuntimeResources({ events, session, onInspect, onCorrelate }: {
   }
   return <section className="rr" aria-label="本回合资源概览">
     <header className="rr-heading"><span><Activity size={13} /> 本回合资源 <small>先看摘要，点击展开</small></span><span className="rr-mock">MOCK · 随事件回放</span></header>
-    <div className="rr-cards">
+      <div className="rr-cards">
       {cards.map(({ key, icon: Icon, value, unit, note, accent }) => <button key={key} id={`${id}-${key}`} className={`rr-card ${expanded === key ? "is-open" : ""}`}
         style={{ "--rr-accent": accent } as CSSProperties} aria-expanded={expanded === key} aria-controls={`${id}-panel`}
         onClick={() => setExpanded(expanded === key ? null : key)}>

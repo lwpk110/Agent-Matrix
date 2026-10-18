@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCodexRuntimeSessionFromLogs } from "./codexRuntimeAdapter";
+import { createCodexRuntimeSessionFromLogs, latestObservedCodexEvent } from "./codexRuntimeAdapter";
 import type { LogEntry } from "../types/matrix";
 
 function log(id: string, sessionId: string, turnId: string, eventName: string, payload: Record<string, unknown>, extra: Partial<NonNullable<LogEntry["runtimeEvent"]>> = {}): LogEntry {
@@ -52,6 +52,43 @@ test("adapts observed prompt, MCP and final answer events into a live session", 
   assert.equal(session.isMock, false);
 });
 
+test("uses matching rollout telemetry for model, effort and turn token totals", () => {
+  const session = createCodexRuntimeSessionFromLogs([
+    log("40", "telemetry-session", "telemetry-turn", "UserPromptSubmit", { prompt: "检查 Token" }, { phase: "prompt" }),
+  ], {
+    sessionId: "telemetry-session",
+    turnId: "telemetry-turn",
+    model: "gpt-6.1-sol",
+    reasoningEffort: "high",
+    modelRequestCount: 2,
+    turnUsage: { inputTokens: 7200, cachedInputTokens: 5100, outputTokens: 42, reasoningTokens: 16, totalTokens: 7242 },
+    latestRequest: { inputTokens: 7100, cachedInputTokens: 5000, outputTokens: 42, reasoningTokens: 16 },
+    contextWindowTokens: 258400,
+  });
+
+  assert.ok(session);
+  assert.equal(session.model, "gpt-6.1-sol");
+  assert.equal(session.reasoningEffort, "high");
+  assert.equal(session.usage.inputTokens, 7200);
+  assert.equal(session.usage.cachedInputTokens, 5100);
+  assert.equal(session.usage.outputTokens, 42);
+  assert.equal(session.rolloutTelemetry?.modelRequestCount, 2);
+  assert.equal(session.rolloutTelemetry?.contextWindowTokens, 258400);
+});
+
+test("removes ambient browser metadata from the user-facing prompt", () => {
+  const session = createCodexRuntimeSessionFromLogs([
+    log("11", "session-ui", "turn-ui", "UserPromptSubmit", {
+      prompt: '<in-app-browser-context source="ambient-ui-state">Current URL: http://localhost:3102/codex</in-app-browser-context>\n\n## My request:\n检查多 Session 历史。',
+    }, { phase: "prompt" }),
+  ]);
+
+  assert.ok(session);
+  assert.equal(session.prompt, "检查多 Session 历史。");
+  assert.equal(session.events[0].summary, "检查多 Session 历史。");
+  assert.deepEqual(session.events[0].input, { prompt: "检查多 Session 历史。" });
+});
+
 test("preserves running status and does not present call arguments as a result", () => {
   const session = createCodexRuntimeSessionFromLogs([
     log("10", "active", "turn-active", "AppServerMcpToolCall", {
@@ -101,4 +138,32 @@ test("only exposes explicitly final answer events and maps observed result field
 
 test("returns no session when the gateway has no Codex events", () => {
   assert.equal(createCodexRuntimeSessionFromLogs([]), null);
+});
+
+test("selects the latest received event when app-server timestamps only identify turn start", () => {
+  const prompt = log("20", "session-order", "turn-order", "UserPromptSubmit", { prompt: "Task" });
+  const call = log("21", "session-order", "turn-order", "AppServerMcpToolCall", {
+    server: "docs", tool: "search", status: "inProgress", arguments: { query: "React" },
+  }, { phase: "started", toolUseId: "call-21", toolName: "docs/search" });
+  call.runtimeEvent!.timestamp = "2026-10-18T09:00:00.000Z";
+  prompt.runtimeEvent!.timestamp = "2026-10-18T10:00:00.000Z";
+  const session = createCodexRuntimeSessionFromLogs([prompt, call]);
+
+  assert.ok(session);
+  assert.equal(session.events.at(-1)?.id, prompt.id);
+  assert.equal(latestObservedCodexEvent(session, [prompt, call])?.id, call.id);
+});
+
+test("keeps the last real transfer cycling through lifecycle-only events and stops on failure", () => {
+  const transfer = log("41", "session-flow", "turn-flow", "PostToolUse", { tool_response: "done" }, { phase: "completed" });
+  const lifecycle = log("42", "session-flow", "turn-flow", "SessionStart", { source: "resume" }, { phase: "lifecycle" });
+  const session = createCodexRuntimeSessionFromLogs([transfer, lifecycle]);
+
+  assert.ok(session);
+  assert.equal(latestObservedCodexEvent(session, [transfer, lifecycle])?.id, transfer.id);
+
+  const failed = log("43", "session-flow", "turn-flow", "PostToolUse", { success: false, error: "denied" }, { phase: "completed" });
+  const withFailure = createCodexRuntimeSessionFromLogs([transfer, lifecycle, failed]);
+  assert.ok(withFailure);
+  assert.equal(latestObservedCodexEvent(withFailure, [transfer, lifecycle, failed])?.status, "failed");
 });

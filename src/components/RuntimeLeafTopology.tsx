@@ -28,6 +28,7 @@ export function RuntimeLeafTopology({ anchor, session, events, onKeep, onLeave, 
 }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const leaves = runtimeLeaves(anchor.id, session, events);
+  const invocationCount = leaves.reduce((total, leaf) => total + (leaf.count ?? 1), 0);
   const active = leaves.find(leaf => leaf.id === activeId) ?? leaves.find(leaf => leaf.status === "loaded") ?? leaves[0];
   const [title, CenterIcon, subtitle] = categories[anchor.id];
   const width = Math.min(600, window.innerWidth - 24);
@@ -54,7 +55,7 @@ export function RuntimeLeafTopology({ anchor, session, events, onKeep, onLeave, 
       onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}
     >
       <header className="rlp-header">
-        <span className="rlp-category"><CenterIcon size={17} /><strong>{subtitle}</strong><span>{leaves.length} 个叶子节点</span></span>
+        <span className="rlp-category"><CenterIcon size={17} /><strong>{subtitle}</strong><span>{leaves.length} 个唯一项 · {invocationCount} 次记录</span></span>
         <button type="button" aria-label="关闭内部拓扑" onClick={onClose}><X size={16} /></button>
       </header>
       <div className="rlp-graph" role="group" aria-label={`${title}的具体条目`}>
@@ -63,36 +64,43 @@ export function RuntimeLeafTopology({ anchor, session, events, onKeep, onLeave, 
           <circle className="rlp-reticle" cx="300" cy="164" r="59" />
           {leaves.map((leaf, i) => {
             const p = positions[i];
-            const hot = active.id === leaf.id;
+            const hot = active?.id === leaf.id;
             return <g key={leaf.id} className={`rlp-spoke ${hot ? "is-active" : ""} is-${leaf.status}`}>
               <line x1="300" y1="164" x2={p.x} y2={p.y} />
               {hot && <line className="rlp-flow" x1="300" y1="164" x2={p.x} y2={p.y} />}
             </g>;
           })}
         </svg>
-        <div className="rlp-core"><CenterIcon size={22} /><strong>{title}</strong><small>{anchor.id === "skill" ? `${leaves.filter(leaf => leaf.status === "loaded").length} 已加载 / ${leaves.length} 可用` : `${leaves.length} 个组成项`}</small></div>
+        <div className="rlp-core"><CenterIcon size={22} /><strong>{title}</strong><small>{anchor.id === "skill" ? `${leaves.filter(leaf => leaf.status === "loaded").length} 已加载 / ${leaves.length} 可用` : `${leaves.length} 个唯一项 · ${invocationCount} 次记录`}</small></div>
         {leaves.map((leaf, i) => {
           const Icon = icons[leaf.icon as keyof typeof icons] ?? Network;
           const p = positions[i];
           return <button type="button" key={leaf.id}
-            className={`rlp-leaf is-${leaf.status} ${active.id === leaf.id ? "is-active" : ""}`}
+            className={`rlp-leaf is-${leaf.status} ${active?.id === leaf.id ? "is-active" : ""}`}
             style={{ left: `${p.x / 6}%`, top: `${p.y / 3.8}%`, "--leaf-delay": `${i * 45}ms` } as CSSProperties}
             aria-label={`${leaf.title} · ${leafStatusLabels[leaf.status]}`}
-            aria-pressed={active.id === leaf.id}
+            aria-pressed={active?.id === leaf.id}
             onMouseEnter={() => setActiveId(leaf.id)} onFocus={() => setActiveId(leaf.id)} onClick={() => setActiveId(leaf.id)}>
             <span className="rlp-leaf-icon"><Icon size={18} /><i /></span>
             <strong>{leaf.title}</strong>
             <small>{leaf.name}</small>
+            {(leaf.count ?? 0) > 1 && <b className="rlp-count">×{leaf.count}</b>}
             <em>{leafStatusLabels[leaf.status]}</em>
           </button>;
         })}
       </div>
       <div className="rlp-leaf-detail" aria-live="polite">
-        <div><strong>{active.title}</strong><span className={`rlp-status is-${active.status}`}><i />{leafStatusLabels[active.status]}</span></div>
-        <p>{active.summary}</p>
-        <button type="button" disabled={!active.eventId && !active.callId} onClick={() => onInspect(active)}>
-          {active.eventId || active.callId ? "查看本轮执行证据" : "暂无本轮执行记录"}<ArrowUpRight size={13} />
-        </button>
+        {active ? <>
+          <div><strong>{active.title}</strong><span className={`rlp-status is-${active.status}`}><i />{leafStatusLabels[active.status]}</span></div>
+          <p>{active.summary}</p>
+          <button type="button" disabled={!active.eventId && !active.callId} onClick={() => onInspect(active)}>
+            {active.eventId || active.callId ? "查看本轮执行证据" : "暂无本轮执行记录"}<ArrowUpRight size={13} />
+          </button>
+        </> : <>
+          <div><strong>本轮未观测到{title}条目</strong><span className="rlp-status is-waiting"><i />无事件记录</span></div>
+          <p>此处只展示 Codex Hook / app-server 实际提供的事件，不以原型目录补齐当前会话。</p>
+          <button type="button" disabled>暂无本轮执行证据<ArrowUpRight size={13} /></button>
+        </>}
       </div>
       <footer><span><i />{session.isReal ? "LIVE · Codex Runtime" : "MOCK · 原型示例"}</span><span>悬浮叶子查看摘要 · Esc 收起</span></footer>
     </section>, document.body,
