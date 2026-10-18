@@ -12,6 +12,7 @@ import child_process from 'child_process';
 import os from 'os';
 import fs from 'fs';
 import { CodexRuntimeEvent, correlateCodexRuntimeEvent, isLoopbackAddress, normalizeCodexHookPayload, reconcileCodexRuntimeHistory } from './src/services/codexRuntime';
+import { CodexAppServerMonitor } from './src/services/codexAppServer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -43,18 +44,21 @@ const SENSITIVE_PATTERNS = [
 
 const pendingApprovals = new Map<string, (decision: { action: string; prompt?: string }) => void>();
 let realEventsHistory: Array<any> = [];
-const CODEX_EVENT_HISTORY_LIMIT = 500;
+const CODEX_EVENT_HISTORY_LIMIT = 2000;
 const CODEX_EVENT_JOURNAL_LIMIT_BYTES = 8 * 1024 * 1024;
-const CODEX_EVENT_JOURNAL_PATH = path.join(process.cwd(), '.codex', 'runtime-events.jsonl');
+const CODEX_EVENT_JOURNAL_PATH = process.env.CODEX_EVENT_JOURNAL_PATH || path.join(process.cwd(), '.codex', 'runtime-events.jsonl');
+const CODEX_APP_SERVER_STATE_PATH = process.env.CODEX_APP_SERVER_STATE_PATH || path.join(process.cwd(), '.codex', 'runtime-appserver-state.json');
 let codexEventsHistory: CodexRuntimeEvent[] = loadCodexRuntimeHistory();
 const localWebSocketClients = new Set<WebSocket>();
 const CODEX_HOOK_PORT = Number(process.env.CODEX_HOOK_PORT) || 7789;
 let codexHookGatewayState: 'starting' | 'listening' | 'offline' = 'starting';
+let codexAppServerState: 'starting' | 'listening' | 'offline' = 'starting';
+let codexAppServerMonitor: CodexAppServerMonitor | undefined;
 
 function isCodexRuntimeEvent(value: unknown): value is CodexRuntimeEvent {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const event = value as Partial<CodexRuntimeEvent>;
-  return event.provider === 'codex' && event.source === 'codex-hook' &&
+  return event.provider === 'codex' && (event.source === 'codex-hook' || event.source === 'codex-app-server') &&
     typeof event.eventId === 'string' && typeof event.hookEventName === 'string' &&
     typeof event.phase === 'string' && typeof event.timestamp === 'string' &&
     !!event.payload && typeof event.payload === 'object';
@@ -169,6 +173,7 @@ function getRealSystemStatus() {
     totalCodexEvents: codexEventsHistory.length,
     codexHookPort: CODEX_HOOK_PORT,
     codexHookGatewayState,
+    codexAppServerState,
     hasClaudeHooks: checkClaudeHooksConfigured(),
     timestamp: new Date().toISOString(),
   };
@@ -455,6 +460,7 @@ app.delete('/api/real/codex-events', (req, res) => {
   try {
     fs.rmSync(CODEX_EVENT_JOURNAL_PATH, { force: true });
   } catch {}
+  codexAppServerMonitor?.checkpoint();
   broadcastLocal({ type: 'codex_runtime_cleared', payload: { timestamp: new Date().toISOString() } });
   res.sendStatus(204);
 });
@@ -543,6 +549,30 @@ async function start() {
   try {
     [...new Set([7788, CODEX_HOOK_PORT])].forEach(startLocalGateway);
   } catch {}
+
+  if (process.env.CODEX_APP_SERVER_MONITOR !== '0') {
+    codexAppServerMonitor = new CodexAppServerMonitor(
+      process.cwd(),
+      (event) => {
+        if (codexEventsHistory.some((current) => current.eventId === event.eventId)) return;
+        const normalized = correlateCodexRuntimeEvent(event, codexEventsHistory);
+        codexEventsHistory.push(normalized);
+        if (codexEventsHistory.length > CODEX_EVENT_HISTORY_LIMIT) codexEventsHistory.shift();
+        persistCodexRuntimeEvent(normalized);
+        broadcastLocal({ type: 'codex_runtime', payload: normalized });
+      },
+      (state) => {
+        codexAppServerState = state;
+        broadcast({ type: 'system_status', payload: getRealSystemStatus() });
+      },
+      2500,
+      CODEX_APP_SERVER_STATE_PATH,
+    );
+    codexAppServerMonitor.seed(codexEventsHistory);
+    codexAppServerMonitor.start();
+  }
+
+  process.on('exit', () => codexAppServerMonitor?.stop());
 
   // Periodic real status broadcast every 4 seconds to all connected clients
   setInterval(() => {

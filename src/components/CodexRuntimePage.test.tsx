@@ -90,3 +90,20 @@ test('keeps completed tool status when asynchronous start evidence arrives later
   assert.equal(tools[0].status, 'done');
   assert.equal(tools[0].events.length, 2);
 });
+
+test('uses app-server prompt and hosted search evidence while avoiding a duplicate hook prompt', () => {
+  const appPrompt = runtimeLog('app-prompt', 'UserPromptSubmit', 'turn-a', '2026-10-17T10:00:00.000Z');
+  appPrompt.runtimeEvent!.source = 'codex-app-server';
+  appPrompt.runtimeEvent!.details = JSON.stringify({ prompt: 'Review this task', selectedSkills: [] });
+  const appSearch = runtimeLog('app-search', 'AppServerWebSearch', 'turn-a', '2026-10-17T10:00:01.000Z');
+  appSearch.runtimeEvent!.source = 'codex-app-server';
+  appSearch.runtimeEvent!.details = JSON.stringify({ query: 'Codex app-server protocol', resultCount: 3 });
+
+  const chain = buildChain([appPrompt, appSearch], true);
+  assert.equal(chain.find((step) => step.kind === 'prompt')?.summary, 'Review this task');
+  assert.equal(chain.find((step) => step.kind === 'search')?.summary, '搜索内容：Codex app-server protocol');
+
+  const hookPrompt = runtimeLog('hook-prompt', 'UserPromptSubmit', 'turn-a', '2026-10-17T10:00:00.100Z');
+  hookPrompt.runtimeEvent!.details = JSON.stringify({ prompt: 'Review this task' });
+  assert.equal(buildChain([appPrompt, hookPrompt], true).filter((step) => step.kind === 'prompt').length, 1);
+});

@@ -13,11 +13,11 @@ function log(id: string, runtime = true, sessionId = 'session-a', turnId = 'turn
   };
 }
 
-test('restores all 500 gateway events and keeps dashboard noise from evicting the prompt', () => {
+test('restores all 2000 gateway events and keeps dashboard noise from evicting the prompt', () => {
   let logs: LogEntry[] = [];
-  for (let index = 0; index < 500; index++) logs = appendRuntimeLog(logs, log(`runtime-${index}`));
+  for (let index = 0; index < 2000; index++) logs = appendRuntimeLog(logs, log(`runtime-${index}`));
   for (let index = 0; index < 200; index++) logs = appendRuntimeLog(logs, log(`dashboard-${index}`, false));
-  assert.equal(logs.filter((entry) => entry.runtimeEvent).length, 500);
+  assert.equal(logs.filter((entry) => entry.runtimeEvent).length, 2000);
   assert.equal(logs[0].id, 'runtime-0');
   assert.equal(logs.filter((entry) => !entry.runtimeEvent).length, 120);
   logs = appendRuntimeLog(logs, log('next-runtime'));

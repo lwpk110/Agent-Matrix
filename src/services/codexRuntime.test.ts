@@ -87,6 +87,21 @@ test('correlates PreToolUse and PostToolUse by toolUseId and computes duration',
   assert.equal(pending.observedIntervalMs, 125);
 });
 
+test('does not infer app-server execution duration from turn-start timestamps', () => {
+  const started = normalizeCodexHookPayload({ hook_event_name: 'PreToolUse', session_id: 'thread-app', turn_id: 'turn-app', tool_use_id: 'call-app' });
+  const finished = normalizeCodexHookPayload({ hook_event_name: 'PostToolUse', session_id: 'thread-app', turn_id: 'turn-app', tool_use_id: 'call-app' });
+  assert.ok(started && finished);
+  started.source = 'codex-app-server';
+  finished.source = 'codex-app-server';
+  started.payload.timestampPrecision = 'turn-start';
+  finished.payload.timestampPrecision = 'turn-start';
+  const first = correlateCodexRuntimeEvent(started, []);
+  const last = correlateCodexRuntimeEvent(finished, [first]);
+  assert.equal(first.correlationStatus, 'unpaired');
+  assert.equal(last.correlationStatus, 'unpaired');
+  assert.equal(last.observedIntervalMs, undefined);
+});
+
 test('correlates out-of-order async hook delivery without calling receipt interval execution time', () => {
   const finish = normalizeCodexHookPayload({ hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'call-late' });
   const start = normalizeCodexHookPayload({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'call-late' });

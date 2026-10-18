@@ -43,9 +43,10 @@ export interface LogEntry {
   riskLevel?: 'nominal' | 'elevated' | 'critical';
   runtimeEvent?: {
     provider: 'codex';
-    source: 'codex-hook';
+    source: 'codex-hook' | 'codex-app-server';
     eventId: string;
     eventName: string;
+    toolName?: string;
     sessionId?: string;
     turnId?: string;
     toolUseId?: string;
@@ -144,6 +145,7 @@ export interface RealSystemStatus {
   totalCodexEvents?: number;
   codexHookPort?: number;
   codexHookGatewayState?: 'starting' | 'listening' | 'offline';
+  codexAppServerState?: 'starting' | 'listening' | 'offline';
   hasClaudeHooks?: boolean;
   timestamp: string;
 }

@@ -133,6 +133,6 @@
    the workflow even when the arbitrary Tailwind column token is unavailable. */
 @media (min-width: 1024px) {
   .codex-runtime-layout {
-    grid-template-columns: 230px minmax(0, 1fr);
+    grid-template-columns: 248px minmax(0, 1fr);
   }
 }

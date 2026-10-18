@@ -1,0 +1,415 @@
+.codex-3d-page {
+  min-height: 100vh;
+  color: #d8e9ff;
+  background: #040913;
+  font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+  padding: 25px 36px 22px;
+  overflow: hidden;
+}
+.codex-3d-header {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: center;
+  max-width: 1600px;
+  margin: 0 auto 20px;
+}
+.codex-3d-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #95b0d5;
+  text-decoration: none;
+  font-size: 12px;
+}
+.codex-3d-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #8edbed;
+  letter-spacing: 1.3px;
+  font:
+    10px Consolas,
+    monospace;
+}
+.codex-3d-header h1 {
+  margin: 8px 0 4px;
+  font:
+    500 42px/1.1 Inter,
+    sans-serif;
+  letter-spacing: 0.2px;
+  color: #e8f4ff;
+}
+.codex-3d-header h1 span {
+  color: #b7a5ff;
+  text-shadow: 0 0 26px #a98aff99;
+}
+.codex-3d-header p {
+  margin: 0;
+  color: #829bb8;
+  font-size: 12px;
+}
+.codex-3d-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+.codex-3d-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  color: #b6cae2;
+  background: #102039;
+  border: 1px solid #87a9d136;
+  border-radius: 5px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.codex-3d-actions button:hover,
+.codex-3d-back:hover {
+  color: #e9f6ff;
+  border-color: #9fdef566;
+}
+.codex-3d-stage {
+  position: relative;
+  height: calc(100vh - 175px);
+  min-height: 540px;
+  max-width: 1600px;
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid #7e9ed33f;
+  border-radius: 13px;
+  background:
+    radial-gradient(ellipse at center, #1a2c5d55, transparent 48%), #050b16;
+  box-shadow:
+    0 25px 100px #0008,
+    inset 0 0 100px #4254a61c,
+    0 0 42px #44c9ef12;
+  isolation: isolate;
+}
+.codex-3d-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.codex-3d-stage::before,
+.codex-3d-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.codex-3d-stage::before {
+  z-index: 2;
+  top: -35%;
+  bottom: auto;
+  height: 30%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    #63dcff0a 42%,
+    #a5a0ff16 50%,
+    #63dcff08 58%,
+    transparent
+  );
+  border-top: 1px solid #86eaff1c;
+  border-bottom: 1px solid #86eaff14;
+  animation: codex-3d-scan 9s linear infinite;
+}
+.codex-3d-stage::after {
+  z-index: 1;
+  background:
+    linear-gradient(#8bdfff08 1px, transparent 1px),
+    linear-gradient(90deg, #8bdfff08 1px, transparent 1px),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0 3px,
+      #e5f8ff04 4px,
+      transparent 5px
+    );
+  background-size: 44px 44px, 44px 44px, 100% 5px;
+  mask-image: linear-gradient(transparent 2%, #000 18%, #000 92%, transparent);
+}
+.codex-3d-canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+.codex-3d-canvas canvas:active {
+  cursor: grabbing;
+}
+.codex-3d-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+.codex-3d-labels button {
+  position: absolute;
+  display: grid;
+  gap: 4px;
+  transform: translate(-50%, -100%);
+  padding: 7px 10px;
+  max-width: 175px;
+  border: 1px solid color-mix(in srgb, var(--node-color) 35%, transparent);
+  border-radius: 5px;
+  color: #d8e9ff;
+  background: #07101bd9;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--node-color) 18%, transparent);
+  text-align: left;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: pointer;
+  backdrop-filter: blur(7px);
+  transition:
+    opacity 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+.codex-3d-labels button:hover {
+  border-color: var(--node-color);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--node-color) 45%, transparent);
+}
+.codex-3d-labels strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 500;
+}
+.codex-3d-labels span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #8ea5c2;
+  font-size: 9px;
+}
+.codex-3d-hud {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  right: 20px;
+  z-index: 4;
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  color: #7696be;
+  font:
+    10px Consolas,
+    monospace;
+  pointer-events: none;
+}
+.codex-3d-hud span:first-child {
+  color: #8de7c4;
+}
+.codex-3d-hud i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #8de7c4;
+  box-shadow: 0 0 10px #8de7c4;
+  animation: codex-3d-blink 1.2s ease-in-out infinite;
+}
+.codex-3d-legend {
+  position: absolute;
+  left: 20px;
+  bottom: 18px;
+  z-index: 4;
+  display: flex;
+  gap: 14px;
+  color: #7f9ab9;
+  font-size: 10px;
+  pointer-events: none;
+}
+.codex-3d-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.codex-3d-legend i {
+  width: 17px;
+  height: 2px;
+  box-shadow: 0 0 9px currentColor;
+}
+.legend-message {
+  background: #82e3ff;
+  color: #82e3ff;
+}
+.legend-call {
+  background: #edcf92;
+  color: #edcf92;
+}
+.legend-feedback {
+  background: #c2a5ff;
+  color: #c2a5ff;
+}
+.codex-3d-inspector {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 5;
+  width: min(330px, calc(100% - 36px));
+  padding: 23px;
+  border: 1px solid #a7a1e066;
+  border-radius: 9px;
+  background: #0a1424e8;
+  backdrop-filter: blur(15px);
+  box-shadow:
+    0 18px 50px #0007,
+    0 0 35px #9d8df01c;
+  animation: codex-3d-slide 0.25s ease-out;
+}
+.codex-3d-close {
+  float: right;
+  border: 0;
+  background: transparent;
+  color: #8ca7c8;
+  cursor: pointer;
+}
+.codex-3d-inspector-code {
+  font:
+    10px Consolas,
+    monospace;
+  letter-spacing: 1px;
+}
+.codex-3d-inspector h2 {
+  margin: 14px 0 8px;
+  color: #e7f1ff;
+  font-size: 23px;
+  font-weight: 500;
+}
+.codex-3d-inspector p {
+  color: #a9bbd4;
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 0 0 14px;
+}
+.codex-3d-inspector > strong {
+  color: #9ed9db;
+  font:
+    11px Consolas,
+    monospace;
+}
+.codex-3d-inspector-data {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 20px 0;
+}
+.codex-3d-inspector-data span {
+  padding: 10px;
+  border: 1px solid #8da8d62c;
+  color: #8da8c8;
+  font-size: 10px;
+}
+.codex-3d-inspector-data b {
+  display: block;
+  margin-top: 4px;
+  color: #e2edff;
+  font:
+    20px Consolas,
+    monospace;
+}
+.codex-3d-inspector a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #b9c5ff;
+  text-decoration: none;
+  font-size: 11px;
+}
+.codex-3d-footer {
+  position: absolute;
+  right: 20px;
+  bottom: 18px;
+  display: flex;
+  gap: 20px;
+  color: #718baa;
+  font:
+    10px Consolas,
+    monospace;
+  pointer-events: none;
+}
+.codex-3d-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+@keyframes codex-3d-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes codex-3d-scan {
+  to {
+    transform: translateY(460%);
+  }
+}
+@keyframes codex-3d-slide {
+  from {
+    transform: translateX(18px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@media (max-width: 850px) {
+  .codex-3d-page {
+    padding: 18px 14px;
+    overflow: auto;
+  }
+  .codex-3d-header {
+    grid-template-columns: 1fr;
+    gap: 11px;
+  }
+  .codex-3d-actions {
+    justify-content: start;
+  }
+  .codex-3d-stage {
+    height: calc(100vh - 255px);
+    min-height: 480px;
+  }
+  .codex-3d-footer {
+    left: 20px;
+    right: 20px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .codex-3d-inspector {
+    top: auto;
+    bottom: 46px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+  }
+}
+@media (max-width: 600px) {
+  .codex-3d-page:has(.codex-3d-inspector) .codex-3d-footer {
+    display: none;
+  }
+  .codex-3d-labels button {
+    max-width: 112px;
+    padding: 5px 7px;
+  }
+  .codex-3d-labels span {
+    display: none;
+  }
+  .codex-3d-inspector {
+    bottom: 14px;
+  }
+  .codex-3d-hud {
+    gap: 8px 12px;
+    font-size: 9px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .codex-3d-stage::before,
+  .codex-3d-hud i {
+    animation: none !important;
+  }
+}

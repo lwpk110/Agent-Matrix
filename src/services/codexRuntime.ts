@@ -39,7 +39,7 @@ function sanitizeValue(value: unknown, depth = 0): unknown {
 
 export interface CodexRuntimeEvent {
   provider: 'codex';
-  source: 'codex-hook';
+  source: 'codex-hook' | 'codex-app-server';
   eventId: string;
   hookEventName: string;
   sessionId?: string;
@@ -63,6 +63,9 @@ export interface CodexRuntimeEvent {
 }
 
 export function correlateCodexRuntimeEvent(event: CodexRuntimeEvent, history: CodexRuntimeEvent[]): CodexRuntimeEvent {
+  if (event.source === 'codex-app-server' && event.payload.timestampPrecision === 'turn-start') {
+    return { ...event, correlationStatus: 'unpaired' };
+  }
   if (!event.toolUseId || (event.phase !== 'started' && event.phase !== 'completed')) {
     return { ...event, correlationStatus: 'unpaired' };
   }

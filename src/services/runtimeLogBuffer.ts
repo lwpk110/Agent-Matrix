@@ -1,6 +1,6 @@
 import type { LogEntry } from '../types/matrix';
 
-export const CODEX_LOG_LIMIT = 500;
+export const CODEX_LOG_LIMIT = 2000;
 const DASHBOARD_LOG_LIMIT = 120;
 
 /** Dashboard activity must not evict the Codex history restored from the gateway. */

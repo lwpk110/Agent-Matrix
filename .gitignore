@@ -6,5 +6,6 @@ coverage/
 .DS_Store
 *.log
 .codex/runtime-events.jsonl
+.codex/runtime-appserver-state.json
 .env*
 !.env.example
