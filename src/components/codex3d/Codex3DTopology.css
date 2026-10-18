@@ -529,6 +529,26 @@
 .codex-3d-signal-dock strong { color: #c5e0e4; font-size: 12px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .codex-3d-signal-dock a { display: flex; gap: 8px; align-items: center; color: #9fdad8; text-decoration: none; font-size: 11px; }
 .codex-3d-inspector { position: fixed; top: 156px; border-radius: 4px; border-color: #9ee9e44f; background: #0b1c26f5; z-index: 6; }
+.codex-3d-actions button.is-selected { color: #d6fff4; border-color: #8ce7df88; background: #1f595f66; }
+.codex-3d-lineage { position: absolute; z-index: 6; top: 72px; left: 18px; width: min(360px, calc(100% - 36px)); max-height: calc(100% - 250px); overflow: auto; padding: 16px; border: 1px solid #8bd4dc4d; background: #091820f2; box-shadow: 0 18px 46px #0009, 0 0 28px #62dacf12; backdrop-filter: blur(16px); animation: codex-3d-slide .22s ease-out; }
+.codex-3d-lineage > header { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+.codex-3d-lineage > header > div { display: grid; gap: 7px; }
+.codex-3d-lineage > header span { display: flex; align-items: center; gap: 7px; color: #80c7c4; font: 9px Consolas, monospace; letter-spacing: 1px; }
+.codex-3d-lineage > header strong { color: #e1f2f0; font-size: 15px; font-weight: 500; }
+.codex-3d-lineage > header button { display: grid; place-items: center; width: 26px; height: 26px; color: #8daeb2; background: transparent; border: 1px solid #8bd4dc2a; cursor: pointer; }
+.codex-3d-lineage-session { display: grid; gap: 5px; margin-top: 15px; padding: 10px 11px; border-left: 2px solid #9cebdd; background: #122a31; }
+.codex-3d-lineage-session span, .codex-3d-lineage-session small { color: #7fa4a7; font-size: 9px; }
+.codex-3d-lineage-session strong { overflow: hidden; color: #d2f1ed; font: 11px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.codex-3d-lineage-links { display: grid; grid-template-columns: repeat(4, 1fr); height: 20px; margin: 0 14px; border-top: 1px solid #76d8cf57; }
+.codex-3d-lineage-links i { justify-self: center; width: 1px; height: 20px; background: linear-gradient(#76d8cf6b, #76d8cf18); }
+.codex-3d-lineage-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.codex-3d-lineage-metrics button { min-width: 0; min-height: 76px; padding: 9px; color: inherit; text-align: left; background: #0d222a; border: 1px solid #83cbd021; cursor: pointer; }
+.codex-3d-lineage-metrics button:hover { border-color: #8ee8d77d; background: #123039; }
+.codex-3d-lineage-metrics span { display: block; color: #87abb0; font-size: 9px; }
+.codex-3d-lineage-metrics strong { display: block; margin: 6px 0 4px; overflow: hidden; color: #d6f4ee; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.codex-3d-lineage-metrics small { display: -webkit-box; overflow: hidden; color: #78999f; font-size: 9px; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.codex-3d-lineage > footer { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 11px; padding-top: 10px; border-top: 1px solid #8bd4dc20; color: #78999f; font-size: 9px; }
+.codex-3d-lineage > footer b { color: #b8dad6; font-weight: 500; text-align: right; }
 @media (max-width: 850px) {
   .codex-3d-stage { min-height: 650px; }
   .codex-3d-signal-dock { grid-template-columns: 1fr; gap: 13px; padding: 15px; }
@@ -538,6 +558,7 @@
   .codex-3d-signal-dock a { display: none; }
   .codex-3d-legend { bottom: 145px; gap: 10px; font-size: 9px; }
   .codex-3d-inspector { top: auto; bottom: 30px; }
+  .codex-3d-lineage { top: 68px; left: 12px; width: min(340px, calc(100% - 24px)); max-height: calc(100% - 265px); }
 }
 .codex-3d-footer { position: static; max-width: 1600px; margin: 12px auto 0; justify-content: space-between; }
 @media (max-width: 600px) {
@@ -546,4 +567,6 @@
   .codex-3d-labels button { width: 92px; min-width: 0; max-width: 92px; padding: 6px 7px; }
   .codex-3d-labels button strong { font-size: 10px; }
   .codex-3d-footer { font-size: 8px; line-height: 1.8; }
+  .codex-3d-lineage { top: 92px; max-height: calc(100% - 310px); padding: 12px; }
+  .codex-3d-lineage-metrics button { min-height: 70px; padding: 7px; }
 }

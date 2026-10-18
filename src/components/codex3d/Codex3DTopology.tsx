@@ -6,6 +6,7 @@ import {
   Crosshair,
   Info,
   Pause,
+  Network,
   Play,
   RotateCcw,
   Sparkles,
@@ -18,6 +19,7 @@ import { RUNTIME_EDGES, RUNTIME_NODES, type RuntimeNode } from "./model";
 import { glowTexture } from "../topology/visualAssets";
 import { createEnergyConduit } from "./energyConduit";
 import { runtimeFlow } from "../runtimeFlow";
+import type { CodexRolloutTelemetry } from "../../types/codexTelemetry";
 import "../codex3d/Codex3DTopology.css";
 
 const nodeById = new Map(RUNTIME_NODES.map((node) => [node.id, node]));
@@ -196,14 +198,78 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
   const [progress, setProgress] = useState(0);
   const [traceReady, setTraceReady] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [lineageOpen, setLineageOpen] = useState(false);
+  const [rolloutTelemetry, setRolloutTelemetry] = useState<CodexRolloutTelemetry | null>(null);
   const [stats, setStats] = useState({
     fps: 60,
     pulses: 1,
   });
-  const liveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs), [logs]);
+  const observedSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs), [logs]);
+  useEffect(() => {
+    if (!observedSession) {
+      setRolloutTelemetry(null);
+      return;
+    }
+    const { id: sessionId, turnId } = observedSession;
+    let active = true;
+    let pending = false;
+    const refresh = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const query = new URLSearchParams({ sessionId, turnId });
+        const response = await fetch(`/api/real/codex-rollout?${query}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Rollout telemetry unavailable");
+        const result = await response.json() as { telemetry: CodexRolloutTelemetry | null };
+        if (active) setRolloutTelemetry(result.telemetry);
+      } catch {
+        if (active) setRolloutTelemetry(null);
+      } finally {
+        pending = false;
+      }
+    };
+    setRolloutTelemetry(null);
+    void refresh();
+    const timer = window.setInterval(refresh, 4000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [observedSession?.id, observedSession?.turnId]);
+  const liveTelemetry = rolloutTelemetry?.sessionId === observedSession?.id && rolloutTelemetry?.turnId === observedSession?.turnId
+    ? rolloutTelemetry
+    : null;
+  const liveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs, liveTelemetry), [logs, liveTelemetry]);
   const demoSession = useMemo(() => createCodexRuntimeMock(), []);
   const session = liveSession || demoSession;
   const liveMode = Boolean(liveSession);
+  const observedTools = useMemo(() => {
+    const groups = new Map<string, number>();
+    session.calls.filter(call => call.type === "local").forEach(call => groups.set(call.name, (groups.get(call.name) ?? 0) + 1));
+    return [...groups.entries()].map(([name, count]) => ({ name, count }));
+  }, [session.calls]);
+  const observedMcp = useMemo(() => {
+    const groups = new Map<string, { count: number; tools: Map<string, number> }>();
+    session.calls.filter(call => call.type === "mcp").forEach(call => {
+      const namespaced = call.name.startsWith("mcp__") ? call.name.slice(5).split("__") : null;
+      const separator = call.name.includes("/") ? "/" : ".";
+      const [server, ...rest] = namespaced?.length === 2 ? namespaced : call.name.split(separator);
+      const group = groups.get(server) ?? { count: 0, tools: new Map<string, number>() };
+      group.count += 1;
+      const tool = rest.join(separator) || call.name;
+      group.tools.set(tool, (group.tools.get(tool) ?? 0) + 1);
+      groups.set(server, group);
+    });
+    return [...groups.entries()].map(([name, value]) => ({ name, ...value }));
+  }, [session.calls]);
+  const observedSkills = useMemo(() => {
+    const names = session.events.filter(event => event.node === "skill").map(event => event.input?.name || event.title);
+    return [...new Set(names.map(name => String(name).trim()).filter(Boolean))];
+  }, [session.events]);
+  const totalTokens = liveSession?.rolloutTelemetry?.turnUsage?.totalTokens
+    ?? (session.usage.inputTokens !== null && session.usage.outputTokens !== null
+      ? session.usage.inputTokens + session.usage.outputTokens
+      : null);
   const latestObservedEvent = useMemo(() => liveSession ? latestObservedCodexEvent(liveSession, logs) : undefined, [liveSession, logs]);
   const selectedNode = selected ? nodeById.get(selected) : undefined;
   const currentEvent = traceReady ? session.events[progress] : undefined;
@@ -773,6 +839,9 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
           </p>
         </div>
         <div className="codex-3d-actions">
+          <button className={lineageOpen ? "is-selected" : ""} aria-expanded={lineageOpen} onClick={() => setLineageOpen(value => !value)}>
+            <Network size={14} />会话血缘
+          </button>
           <button
             onClick={() => {
               setProgress(0);
@@ -886,6 +955,23 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
           <div><small>{currentEvent?.name ?? "AGENT RUNTIME / DATA FLOW"}</small><strong>{currentEvent?.title ?? "输入 → 上下文 → 模型 ⇄ 工具 → 返回用户"}</strong></div>
           <a href={`/codex${currentEvent ? `?node=${currentEvent.node}` : ""}`}>查看事件详情 <Info size={13} /></a>
         </div>
+        {lineageOpen && (
+          <aside className="codex-3d-lineage" aria-label="会话知识图谱">
+            <header>
+              <div><span><Network size={14} /> SESSION LINEAGE</span><strong>会话知识图谱</strong></div>
+              <button aria-label="关闭会话血缘" onClick={() => setLineageOpen(false)}><X size={15} /></button>
+            </header>
+            <div className="codex-3d-lineage-session"><span>{liveMode ? "本机运行记录" : "演示会话"}</span><strong>{session.id}</strong><small>{session.turnId} · {session.model}</small></div>
+            <div className="codex-3d-lineage-links" aria-hidden="true"><i /><i /><i /><i /></div>
+            <div className="codex-3d-lineage-metrics">
+              <button onClick={() => setSelected("model")}><span>本轮 Token</span><strong>{totalTokens === null ? "未采集" : totalTokens.toLocaleString()}</strong><small>输入 {session.usage.inputTokens?.toLocaleString() ?? "未采集"} · 输出 {session.usage.outputTokens?.toLocaleString() ?? "未采集"}</small></button>
+              <button onClick={() => setSelected("tool")}><span>本地工具</span><strong>{observedTools.length} 种 · {session.calls.filter(call => call.type === "local").length} 次</strong><small>{observedTools.map(item => item.name).join(" · ") || "未观测到本地工具调用"}</small></button>
+              <button onClick={() => setSelected("mcp")}><span>MCP 服务</span><strong>{observedMcp.length} 种 · {session.calls.filter(call => call.type === "mcp").length} 次</strong><small>{observedMcp.map(item => `${item.name}: ${[...item.tools].map(([tool, count]) => `${tool} ×${count}`).join(", ")}`).join(" · ") || "未观测到 MCP 调用"}</small></button>
+              <button onClick={() => setSelected("skill")}><span>Skill</span><strong>{observedSkills.length} 项已观测</strong><small>{observedSkills.join(" · ") || "未观测到 Skill 加载事件"}</small></button>
+            </div>
+            <footer><span>关联模型请求</span><b>{liveSession?.rolloutTelemetry?.modelRequestCount ?? (session.rounds.length || "未采集")}</b><span>调用状态</span><b>{session.calls.filter(call => call.status === "failed").length ? `${session.calls.filter(call => call.status === "failed").length} 次失败` : "无失败记录"}</b></footer>
+          </aside>
+        )}
       </section>
       {selectedNode && (
         <aside className="codex-3d-inspector">
