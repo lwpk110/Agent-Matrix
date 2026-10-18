@@ -142,8 +142,14 @@ test("node drilldown preserves related searches and custom prompt flows into all
   );
   for (const event of session.events.filter(
     (event) => event.name === "model.request",
-  ))
+  )) {
     assert.equal(event.input?.user_message, prompt);
+    assert.equal(event.input?.model, session.model);
+    assert.equal(event.input?.effort, session.reasoningEffort);
+  }
+  const startConfig = session.events.find(event => event.name === "SessionStart")?.output;
+  assert.equal(startConfig?.model, session.model);
+  assert.equal(startConfig?.effort, session.reasoningEffort);
   assert.deepEqual(
     mockEventsForNode(session, "search").map((event) => event.callId),
     ["call_files_01", "call_docs_04"],

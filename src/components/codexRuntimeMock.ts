@@ -19,7 +19,8 @@ export type MockStatus =
   | "running"
   | "waiting"
   | "failed"
-  | "allowed";
+  | "allowed"
+  | "unknown";
 export interface MockRuntimeEvent {
   id: string;
   sessionId: string;
@@ -30,13 +31,14 @@ export interface MockRuntimeEvent {
   kind: MockKind;
   node: MockNodeId;
   relatedNodes: MockNodeId[];
-  source: "App Server" | "Hook" | "策略快照" | "上下文快照" | "演示用户";
+  source: "App Server" | "Hook" | "策略快照" | "上下文快照" | "演示用户" | "Codex App Server" | "Codex Hook";
   title: string;
   summary: string;
   status: MockStatus;
   callId?: string;
   roundId?: string;
   durationMs?: number;
+  hasToolResponse?: boolean;
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   content?: string;
@@ -50,7 +52,8 @@ export interface MockCall {
   arguments: Record<string, unknown>;
   result: Record<string, unknown>;
   durationMs: number;
-  status: "completed" | "failed";
+  status: "completed" | "running" | "waiting" | "failed" | "unknown";
+  resultReceived?: boolean;
   retryOf?: string;
   approvalId?: string;
 }
@@ -63,13 +66,40 @@ export interface MockRound {
   callIds: string[];
   response: string;
 }
+export interface MockMemory {
+  id: string;
+  title: string;
+  scope: "用户" | "项目";
+  mode: "始终带入" | "按需读取";
+  content: string;
+  source: string;
+  updatedAt: string;
+}
+export interface MockContextSnapshot {
+  total: number;
+  limit: number;
+  basis: "mock-estimate";
+  segments: { id: string; label: string; tokens: number }[];
+  memoryIds: string[];
+}
 export const MOCK_USER_PROMPT =
   "介绍当前项目的架构，核对 React 官方文档，并检查本地 /codex 页面。联网前先征得我确认，不要修改文件。";
 export const MOCK_SESSION_ID = "sess_demo_024";
 export const MOCK_TURN_ID = "turn_08";
 export const MOCK_CWD = "D:/workspace/github/Agent-Matrix";
 
+/** Fictional capability catalogue, distinct from skills actually loaded by this turn. */
+export const MOCK_SKILL_CATALOG = [
+  { id: "browser-inspection", title: "页面检查", description: "检查页面结构、交互与控制台；超时后最多重试一次。", icon: "browser" },
+  { id: "architecture-review", title: "架构分析", description: "梳理模块边界、入口和依赖关系。本轮未读取此指南。", icon: "layers" },
+  { id: "docs-research", title: "文档检索", description: "检索资料并整理出处。本轮文档查询通过 MCP 执行，未加载此 Skill。", icon: "book" },
+  { id: "test-validation", title: "测试验证", description: "选择验证范围、执行检查并汇总结果。本轮只读演示未加载此指南。", icon: "check" },
+  { id: "git-workflow", title: "版本管理", description: "检查变更和准备提交。本轮未修改文件，也未加载此指南。", icon: "git" },
+] as const;
+
 export function createCodexRuntimeMock(prompt = MOCK_USER_PROMPT) {
+  const model = "codex-demo-model";
+  const reasoningEffort = "high";
   const instruction =
     "你是本次演示的代码助手。先收集证据，再回答；遵守只读限制；联网访问需要用户确认；不要把未执行的动作描述为已完成。";
   const skillText =
@@ -292,7 +322,8 @@ export function createCodexRuntimeMock(prompt = MOCK_USER_PROMPT) {
     summary: "建立会话与回合，关联本地工作区。",
     output: {
       cwd: MOCK_CWD,
-      model: "codex-demo-model",
+      model,
+      effort: reasoningEffort,
       sandbox: "read-only",
       approval_policy: "on-request",
       subagents: "not used",
@@ -332,6 +363,21 @@ export function createCodexRuntimeMock(prompt = MOCK_USER_PROMPT) {
         content: null,
       },
     },
+  });
+  const memories: MockMemory[] = [
+    { id: "answer-style", title: "回答偏好", scope: "用户", mode: "始终带入", content: "先给摘要，再提供证据与细节。", source: "memory://demo/user/answer-style", updatedAt: "2026-10-16 09:30" },
+    { id: "project-map", title: "项目架构备忘", scope: "项目", mode: "按需读取", content: "React/Vite 展示运行链路，Express 与 WebSocket 汇入观测事件。读取当前文件后再核对，备忘不能替代最新证据。", source: "memory://demo/project/architecture", updatedAt: "2026-10-17 10:20" },
+    { id: "release-notes", title: "历史发布约定", scope: "项目", mode: "按需读取", content: "发布前记录版本变更。本轮无发布任务，因此不读取。", source: "memory://demo/project/releases", updatedAt: "2026-10-15 16:00" },
+  ];
+  emit(160, {
+    name: "memory.snapshot", kind: "context", node: "context", source: "上下文快照",
+    title: "发现演示记忆库", summary: "3 条虚构记忆；回答偏好带入上下文，其余按需读取。本轮不写入记忆。",
+    output: { entries: memories, loaded_ids: ["answer-style"], storage: "fictional; no workspace files read or written" },
+  });
+  emit(4000, {
+    name: "memory.loaded", kind: "context", node: "context", source: "上下文快照",
+    title: "按需读取项目架构备忘", summary: "架构备忘将在下一次模型请求中带入，并与最新文件核对。",
+    output: { memory_id: "project-map", content: memories[1].content, action: "read", persisted_writes: 0 },
   });
   emit(200, {
     name: "prompt.composition",
@@ -396,11 +442,26 @@ export function createCodexRuntimeMock(prompt = MOCK_USER_PROMPT) {
         },
       ],
       note: "服务和工具名为本原型的模拟配置",
+      skills: MOCK_SKILL_CATALOG,
     },
   });
 
   function requestRound(index: number, at: number) {
     const round = rounds[index];
+    const memoryTokens = index >= 2 ? 300 : 180;
+    const skillTokens = index >= 2 ? 200 : 0;
+    const contextSnapshot: MockContextSnapshot = {
+      total: round.inputTokens, limit: 32768, basis: "mock-estimate",
+      segments: [
+        { id: "instructions", label: "指令与约束", tokens: 240 },
+        { id: "user", label: "用户消息", tokens: 120 },
+        { id: "definitions", label: "工具 / MCP 定义", tokens: 500 },
+        { id: "memory", label: "已读取记忆", tokens: memoryTokens },
+        { id: "skill", label: "已加载 Skill", tokens: skillTokens },
+        { id: "history", label: "历史消息与工具结果", tokens: round.inputTokens - 860 - memoryTokens - skillTokens },
+      ],
+      memoryIds: index >= 2 ? ["answer-style", "project-map"] : ["answer-style"],
+    };
     emit(at, {
       name: "model.request",
       kind: "model",
@@ -413,12 +474,13 @@ export function createCodexRuntimeMock(prompt = MOCK_USER_PROMPT) {
         ? `追加 ${round.consumedCallIds.length} 个工具结果，继续模型循环。`
         : "发送初始消息与可用工具定义。",
       input: {
-        model: "codex-demo-model",
-        effort: "high",
+        model,
+        effort: reasoningEffort,
         demonstration_instruction: instruction,
         user_message: prompt,
         context_refs: ["context.snapshot", "capabilities.snapshot"],
         active_skill_refs: index >= 2 ? ["browser-inspection"] : [],
+        context_snapshot: contextSnapshot,
         added_tool_results: round.consumedCallIds.map((id) => ({
           call_id: id,
           result: calls.find((call) => call.id === id)!.result,
@@ -738,8 +800,11 @@ export function createCodexRuntimeMock(prompt = MOCK_USER_PROMPT) {
     turnId: MOCK_TURN_ID,
     cwd: MOCK_CWD,
     prompt,
+    model,
+    reasoningEffort,
     instruction,
     skillText,
+    skillCatalog: MOCK_SKILL_CATALOG,
     finalAnswer,
     calls,
     rounds,
@@ -750,7 +815,22 @@ export function createCodexRuntimeMock(prompt = MOCK_USER_PROMPT) {
     isMock: true as const,
   };
 }
-export type MockRuntimeSession = ReturnType<typeof createCodexRuntimeMock>;
+type RuntimeRound = Omit<MockRound, "inputTokens" | "cachedInputTokens" | "outputTokens"> & {
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+};
+type RuntimeCall = Omit<MockCall, "durationMs"> & { durationMs: number | null; status: Exclude<MockStatus, "allowed"> };
+export type MockRuntimeSession = Omit<ReturnType<typeof createCodexRuntimeMock>, "isMock" | "isReal" | "usage" | "rounds" | "calls" | "durationMs" | "skillCatalog"> & {
+  isMock: boolean;
+  isReal?: boolean;
+  dataSource?: "mock" | "live";
+  usage: { inputTokens: number | null; outputTokens: number | null; cachedInputTokens: number | null };
+  rounds: RuntimeRound[];
+  calls: RuntimeCall[];
+  durationMs: number | null;
+  skillCatalog: readonly { id: string; title: string; description: string; icon: string }[];
+};
 export function mockEventsForNode(
   session: MockRuntimeSession,
   node: MockNodeId,

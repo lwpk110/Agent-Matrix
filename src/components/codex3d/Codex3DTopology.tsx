@@ -12,6 +12,8 @@ import {
   X,
 } from "lucide-react";
 import { createCodexRuntimeMock, type MockNodeId } from "../codexRuntimeMock";
+import type { LogEntry } from "../../types/matrix";
+import { createCodexRuntimeSessionFromLogs } from "../codexRuntimeAdapter";
 import { RUNTIME_EDGES, RUNTIME_NODES, type RuntimeNode } from "./model";
 import { glowTexture } from "../topology/visualAssets";
 import { createEnergyConduit } from "./energyConduit";
@@ -182,24 +184,48 @@ function nodeRole(node: RuntimeNode) {
   } as Record<MockNodeId, string>)[node.id];
 }
 
-export function Codex3DTopology() {
+export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
   const host = useRef<HTMLDivElement>(null);
   const labelRefs = useRef(new Map<MockNodeId, HTMLButtonElement>());
   const [selected, setSelected] = useState<MockNodeId | null>(null);
+  const [hovered, setHovered] = useState<MockNodeId | null>(null);
   const [paused, setPaused] = useState(false);
   const [autoRotate, setAutoRotate] = useState(false);
   const [view, setView] = useState<"orbit" | "top">("orbit");
   const [replaying, setReplaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [traceReady, setTraceReady] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [stats, setStats] = useState({
     fps: 60,
     pulses: 1,
   });
-  const session = useMemo(() => createCodexRuntimeMock(), []);
+  const liveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs), [logs]);
+  const demoSession = useMemo(() => createCodexRuntimeMock(), []);
+  const session = liveSession || demoSession;
+  const liveMode = Boolean(liveSession);
   const selectedNode = selected ? nodeById.get(selected) : undefined;
-  const currentEvent = replaying ? session.events[progress] : undefined;
-  const live = useRef({ selected, paused, autoRotate, view, currentEvent });
-  live.current = { selected, paused, autoRotate, view, currentEvent };
+  const currentEvent = traceReady ? session.events[progress] : undefined;
+  const selectedEvents = selectedNode
+    ? session.events
+        .filter((event) => event.node === selectedNode.id || event.relatedNodes.includes(selectedNode.id))
+        .slice(-4)
+        .reverse()
+    : [];
+  const nodeNote = (node: RuntimeNode) => {
+    if (!liveMode) return node.note;
+    const nodeEvents = session.events.filter(event => event.node === node.id);
+    if (node.id === "model") return session.rounds.length ? `${session.rounds.length} 条请求记录` : "模型请求未采集";
+    if (nodeEvents.length) return `${nodeEvents.length} 条事件已采集`;
+    return "本回合暂无事件";
+  };
+  const nodeSummary = (node: RuntimeNode) => {
+    if (!liveMode) return node.summary;
+    const lastEvent = session.events.filter(event => event.node === node.id).at(-1);
+    return lastEvent?.summary || "当前会话没有采集到此节点事件；拓扑位置表示运行阶段，不代表本回合实际执行。";
+  };
+  const live = useRef({ selected, hovered, paused, autoRotate, view, currentEvent, playbackSpeed });
+  live.current = { selected, hovered, paused, autoRotate, view, currentEvent, playbackSpeed };
 
   useEffect(() => {
     if (!replaying || paused) return;
@@ -211,10 +237,10 @@ export function Codex3DTopology() {
       session.events[progress + 1].offsetMs - session.events[progress].offsetMs;
     const timer = window.setTimeout(
       () => setProgress((value) => value + 1),
-      Math.min(620, Math.max(150, gap * 0.82)),
+      Math.max(65, Math.min(620, gap * 0.82) / playbackSpeed),
     );
     return () => window.clearTimeout(timer);
-  }, [progress, replaying, paused, session]);
+  }, [progress, replaying, paused, playbackSpeed, session]);
 
   useEffect(() => {
     const mount = host.current;
@@ -234,19 +260,19 @@ export function Codex3DTopology() {
     controls.autoRotateSpeed = 0.3;
     controls.minDistance = 10;
     controls.maxDistance = 44;
-    controls.target.set(0, -1.1, 0);
+    controls.target.set(0, 1.2, 0);
     const mobilePositions: Record<MockNodeId, [number, number, number]> = {
-      input: [-5, 0, 7],
-      context: [-5, 0, 0],
-      prompt: [-5, 0, -7],
-      skill: [0, 0, -9],
-      model: [0, 0, 0],
-      hook: [5, 0, -7],
-      gate: [5, 0, 0],
-      tool: [5, 0, 7],
-      mcp: [0, 0, 13],
-      search: [-5, 0, 13],
-      output: [0, 0, 7],
+      input: [-5, 0.2, 7],
+      context: [-5, 1.7, 0],
+      prompt: [-5, 1.7, -7],
+      skill: [0, 1.7, -9],
+      model: [0, 3.4, 0],
+      hook: [5, 2.2, -7],
+      gate: [5, 2.2, 0],
+      tool: [5, 0.3, 7],
+      mcp: [0, 0.3, 13],
+      search: [-5, 1.7, 13],
+      output: [0, 0.2, 7],
     };
     let mobileLayout = mount.clientWidth <= 600;
     const nodePosition = (node: RuntimeNode): [number, number, number] =>
@@ -456,7 +482,7 @@ export function Codex3DTopology() {
       if (mobileLayout) camera.position.set(0, 35 * mobileFit, 0.1);
       else if (live.current.view === "top") {
         camera.position.set(0, 50, 1.1);
-        controls.target.set(0, 0.4, 1);
+        controls.target.set(0, 1.2, 1);
       }
       else camera.position.set(16, 18, 23);
       controls.update();
@@ -498,8 +524,28 @@ export function Codex3DTopology() {
       )[0];
       if (hit?.object.userData.nodeId) setSelected(hit.object.userData.nodeId);
     };
+    const pointerMove = (event: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.set(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        (-(event.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      ray.setFromCamera(pointer, camera);
+      const hit = ray.intersectObjects(
+        Array.from(objectMap.values()).map((item) => item.hit),
+      )[0];
+      const nodeId = hit?.object.userData.nodeId as MockNodeId | undefined;
+      setHovered((current) => current === nodeId ? current : nodeId ?? null);
+      renderer.domElement.style.cursor = nodeId ? "pointer" : "grab";
+    };
+    const pointerLeave = () => {
+      setHovered(null);
+      renderer.domElement.style.cursor = "grab";
+    };
     renderer.domElement.addEventListener("pointerdown", pointerDown);
     renderer.domElement.addEventListener("pointerup", pointerUp);
+    renderer.domElement.addEventListener("pointermove", pointerMove);
+    renderer.domElement.addEventListener("pointerleave", pointerLeave);
     let lastView = view;
     const frame = (now: number) => {
       if (!alive) return;
@@ -508,7 +554,10 @@ export function Codex3DTopology() {
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       const moving = !state.paused && !reducedMotion.matches;
-      if (eventId !== state.currentEvent?.id) { eventId = state.currentEvent?.id; eventAge = 0; }
+      if (eventId !== state.currentEvent?.id) {
+        eventId = state.currentEvent?.id;
+        eventAge = state.paused && state.currentEvent ? 0.45 : 0;
+      }
       if (moving) { elapsed += dt; eventAge += dt; }
       controls.autoRotate =
         state.autoRotate && !state.paused && !reducedMotion.matches;
@@ -519,7 +568,7 @@ export function Codex3DTopology() {
           state.view === "top" ? 50 : 20,
           state.view === "top" ? 1.1 : 25,
         );
-        controls.target.set(0, 0.4, state.view === "top" ? 1 : 0);
+        controls.target.set(0, 1.2, state.view === "top" ? 1 : 0);
         controls.update();
       }
       if (cameraDestination) {
@@ -527,8 +576,19 @@ export function Codex3DTopology() {
         if (camera.position.distanceTo(cameraDestination) < 0.02) cameraDestination = undefined;
       }
       controls.update();
+      const focusedNode = state.hovered ?? state.selected;
+      const focusedPeers = new Set<MockNodeId>();
+      if (focusedNode) {
+        focusedPeers.add(focusedNode);
+        RUNTIME_EDGES.forEach((edge) => {
+          if (edge.from === focusedNode) focusedPeers.add(edge.to);
+          if (edge.to === focusedNode) focusedPeers.add(edge.from);
+        });
+      }
       for (const node of RUNTIME_NODES) {
         const visual = objectMap.get(node.id)!;
+        const inFocus = !focusedNode || focusedPeers.has(node.id);
+        const focusOpacity = inFocus ? 1 : 0.18;
         const eventStatus: NodeVisualState = state.currentEvent?.node === node.id
           ? state.currentEvent.status === "waiting" ? "waiting"
             : state.currentEvent.status === "failed" ? "failed"
@@ -553,9 +613,9 @@ export function Codex3DTopology() {
         visual.icon.position.y =
           1.2 + Math.sin(elapsed * 1.2 + node.position[0]) * 0.08;
         (visual.icon.material as THREE.SpriteMaterial).opacity =
-          0.78 + nextIntensity * 0.22;
+          (0.78 + nextIntensity * 0.22) * focusOpacity;
         (visual.ring.material as THREE.MeshBasicMaterial).opacity =
-          0.4 + nextIntensity * 0.56;
+          (0.4 + nextIntensity * 0.56) * focusOpacity;
         visual.ring.scale.setScalar(
           1 + nextIntensity * (0.12 + Math.sin(elapsed * 2) * 0.035),
         );
@@ -565,12 +625,12 @@ export function Codex3DTopology() {
               : eventStatus === "active" ? node.color : "#496278";
         const statusMaterial = visual.statusDot.material as THREE.MeshBasicMaterial;
         statusMaterial.color.set(statusColor);
-        statusMaterial.opacity = eventStatus === "idle" ? 0.5 : 0.95;
+        statusMaterial.opacity = (eventStatus === "idle" ? 0.5 : 0.95) * focusOpacity;
         visual.statusDot.scale.setScalar(eventStatus === "waiting" ? 1 + Math.sin(elapsed * 4) * 0.15 : 1);
-        const accentTarget = eventStatus === "failed" ? 0.85
+        const accentTarget = (eventStatus === "failed" ? 0.85
           : eventStatus === "waiting" ? 0.75
             : eventStatus === "active" ? 0.88
-              : eventStatus === "completed" ? 0.62 : 0.3;
+              : eventStatus === "completed" ? 0.62 : 0.3) * focusOpacity;
         visual.accent.scale.setScalar(1 + nextIntensity * 0.035 + (eventStatus === "waiting" ? Math.sin(elapsed * 3.2) * 0.025 : 0));
         visual.accent.traverse((child) => {
           const material = (child as THREE.Mesh | THREE.Line).material;
@@ -585,7 +645,7 @@ export function Codex3DTopology() {
       }
       const flow = runtimeFlow(state.currentEvent);
       const nextEvent = state.currentEvent && session.events[session.events.indexOf(state.currentEvent) + 1];
-      const duration = Math.min(620, Math.max(150, ((nextEvent?.offsetMs ?? 0) - (state.currentEvent?.offsetMs ?? 0)) * 0.82)) / 1000;
+      const duration = Math.max(65, Math.min(620, ((nextEvent?.offsetMs ?? 0) - (state.currentEvent?.offsetMs ?? 0)) * 0.82) / state.playbackSpeed) / 1000;
       const pulseStep = elapsed / 1.85;
       let activePackets = 0;
       for (const item of lines) {
@@ -598,6 +658,7 @@ export function Codex3DTopology() {
           .add(new THREE.Vector3(0, item.edge.type === "feedback" ? 3.4 : 0.8, 0));
         item.curve.v2.copy(to).add(new THREE.Vector3(0, 0.8, 0));
         const hot = flow?.from === item.edge.from && flow?.to === item.edge.to;
+        const focused = !focusedNode || item.edge.from === focusedNode || item.edge.to === focusedNode;
         item.energy = THREE.MathUtils.lerp(
           item.energy,
           hot ? 1 : 0,
@@ -615,7 +676,7 @@ export function Codex3DTopology() {
         const trimStart = Math.min(0.28, (item.edge.from === "model" ? 2.7 : 1.6) / item.curve.getLength());
         const trimEnd = 1 - Math.min(0.28, (item.edge.to === "model" ? 2.7 : 1.6) / item.curve.getLength());
         item.curve.getPoint(trimStart + pulseProgress * (trimEnd - trimStart), item.packet.position);
-        (item.packet.material as THREE.SpriteMaterial).opacity = active && !reducedMotion.matches && rawProgress < 1 ? Math.min(1, rawProgress * 12) * Math.min(1, (1 - rawProgress) * 8) : 0;
+        (item.packet.material as THREE.SpriteMaterial).opacity = active && !reducedMotion.matches && rawProgress < 1 ? Math.min(1, rawProgress * 12) * Math.min(1, (1 - rawProgress) * 8) * (focused ? 1 : 0.08) : 0;
         if (active && moving && rawProgress > 0.76 && rawProgress < 0.84) arrivals.set(item.edge.to, elapsed);
         item.trace.update(
           item.curve, camera, pulseProgress, active && rawProgress < 1 && !reducedMotion.matches, item.energy,
@@ -623,6 +684,7 @@ export function Codex3DTopology() {
           item.edge.to === "model" ? 2.7 : 1.6,
           mount.clientWidth, mount.clientHeight,
         );
+        (item.trace.mesh.material as THREE.ShaderMaterial).uniforms.opacity.value = focused ? 1 : 0.12;
       }
       coreOrbits.forEach((orbit, index) => {
         const motionDt = state.paused || reducedMotion.matches ? 0 : dt;
@@ -644,7 +706,9 @@ export function Codex3DTopology() {
         const edgePadding = window.innerWidth <= 600 ? 58 : 88;
         label.style.left = `${THREE.MathUtils.clamp(screenX, edgePadding, mount.clientWidth - edgePadding)}px`;
         label.style.top = `${(-projected.y * 0.5 + 0.5) * mount.clientHeight}px`;
-        label.style.opacity = projected.z > 1 ? "0" : "1";
+        label.style.opacity = projected.z > 1
+          ? "0"
+          : focusedNode && !focusedPeers.has(node.id) ? "0.28" : "1";
       });
       frames++;
       if (now - fpsAt > 1000) {
@@ -662,6 +726,8 @@ export function Codex3DTopology() {
       observer.disconnect();
       renderer.domElement.removeEventListener("pointerdown", pointerDown);
       renderer.domElement.removeEventListener("pointerup", pointerUp);
+      renderer.domElement.removeEventListener("pointermove", pointerMove);
+      renderer.domElement.removeEventListener("pointerleave", pointerLeave);
       controls.dispose();
       scene.traverse((item) => {
         const mesh = item as THREE.Mesh;
@@ -685,8 +751,8 @@ export function Codex3DTopology() {
           返回 2D Runtime
         </a>
         <div>
-          <span className="codex-3d-kicker">
-            <Sparkles size={13} /> CODEX RUNTIME / 3D TOPOLOGY
+            <span className="codex-3d-kicker">
+            <Sparkles size={13} /> CODEX RUNTIME / 3D TOPOLOGY · {liveMode ? "LIVE" : "DEMO"}
           </span>
           <h1>
             Runtime <span>Observatory</span>
@@ -699,6 +765,7 @@ export function Codex3DTopology() {
           <button
             onClick={() => {
               setProgress(0);
+              setTraceReady(true);
               setReplaying(true);
               setPaused(false);
             }}
@@ -728,19 +795,28 @@ export function Codex3DTopology() {
                 else labelRefs.current.delete(node.id);
               }}
               key={node.id}
-              className={selected === node.id || currentEvent?.node === node.id ? "is-active" : ""}
+              className={[
+                selected === node.id || currentEvent?.node === node.id ? "is-active" : "",
+                hovered && hovered !== node.id && !RUNTIME_EDGES.some(edge =>
+                  (edge.from === hovered && edge.to === node.id) ||
+                  (edge.to === hovered && edge.from === node.id)) ? "is-dimmed" : "",
+              ].filter(Boolean).join(" ")}
               onClick={() => setSelected(node.id)}
+              onMouseEnter={() => setHovered(node.id)}
+              onMouseLeave={() => setHovered(null)}
+              onFocus={() => setHovered(node.id)}
+              onBlur={() => setHovered(null)}
               style={{ "--node-color": node.color } as React.CSSProperties}
             >
               <strong><i className="codex-3d-label-status" />{node.title}</strong>
               <small>{nodeRole(node)}</small>
-              <span>{node.note}</span>
+              <span>{nodeNote(node)}</span>
             </button>
           ))}
         </div>
         <div className="codex-3d-hud">
           <span>
-            <i /> LIVE MOCK TRACE
+            <i /> {liveMode ? "CODEX EVENT STREAM · LIVE" : "MOCK EVENT STREAM"}
           </span>
           <span>
             {session.events.length} EVENTS · {session.calls.length} CALLS
@@ -769,7 +845,33 @@ export function Codex3DTopology() {
           </span>
         </div>
         <div className="codex-3d-signal-dock">
-          <span><i />{replaying ? paused ? "回放已暂停" : "会话回放" : "拓扑预览"}<small>MOCK SESSION / TURN 08</small></span>
+          <div className="codex-3d-playback">
+            <button aria-label={replaying && !paused ? "暂停事件回放" : "继续事件回放"} onClick={() => {
+              if (replaying && !paused) {
+                setPaused(true);
+                return;
+              }
+              if (!traceReady || progress >= session.events.length - 1) {
+                setProgress(0);
+                setTraceReady(true);
+              }
+              setPaused(false);
+              setReplaying(true);
+            }}>{replaying && !paused ? <Pause size={14} /> : <Play size={14} />}</button>
+            <input aria-label="事件回放进度" type="range" min={0} max={session.events.length - 1} value={progress}
+              style={{ "--playback-progress": `${session.events.length > 1 ? progress / (session.events.length - 1) * 100 : 0}%` } as React.CSSProperties}
+              onChange={event => {
+                setProgress(Number(event.currentTarget.value));
+                setTraceReady(true);
+                setReplaying(true);
+                setPaused(true);
+              }} />
+            <span>{traceReady ? `${progress + 1} / ${session.events.length}` : "事件回放"}</span>
+            <select aria-label="事件回放速度" value={playbackSpeed} onChange={event => setPlaybackSpeed(Number(event.currentTarget.value))}>
+              <option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option>
+            </select>
+          </div>
+          <span><i />{replaying ? paused ? "回放已暂停" : "会话回放" : "拓扑预览"}<small>{liveMode ? `${session.id} / ${session.turnId}` : "MOCK SESSION / TURN 08"}</small></span>
           <div><small>{currentEvent?.name ?? "AGENT RUNTIME / DATA FLOW"}</small><strong>{currentEvent?.title ?? "输入 → 上下文 → 模型 ⇄ 工具 → 返回用户"}</strong></div>
           <a href={`/codex${currentEvent ? `?node=${currentEvent.node}` : ""}`}>查看事件详情 <Info size={13} /></a>
         </div>
@@ -786,8 +888,8 @@ export function Codex3DTopology() {
             {selectedNode.code}
           </span>
           <h2>{selectedNode.title}</h2>
-          <p>{selectedNode.summary}</p>
-          <strong>{selectedNode.note}</strong>
+          <p>{nodeSummary(selectedNode)}</p>
+          <strong>{nodeNote(selectedNode)}</strong>
           <div className="codex-3d-inspector-data">
             <span>
               关联事件{" "}
@@ -807,6 +909,19 @@ export function Codex3DTopology() {
                 {new Set(session.events.filter(event => event.callId && (event.node === selectedNode.id || event.relatedNodes.includes(selectedNode.id))).map(event => event.callId)).size}
               </b>
             </span>
+          </div>
+          <div className="codex-3d-inspector-events">
+            <span className="codex-3d-inspector-section">最近关联事件</span>
+            {selectedEvents.length ? selectedEvents.map((event) => (
+              <div className="codex-3d-event-row" key={event.id}>
+                <i className={`event-status-${event.status}`} />
+                <div>
+                  <strong>{event.title}</strong>
+                  <small>{event.time} · {({ completed: "完成", running: "执行中", waiting: "等待", failed: "失败", allowed: "已允许", unknown: "状态未采集" })[event.status]} · {event.source}</small>
+                  <p>{event.summary}</p>
+                </div>
+              </div>
+            )) : <p className="codex-3d-events-empty">当前会话没有该节点的事件记录</p>}
           </div>
           <a href={`/codex?node=${selectedNode.id}`}>
             进入 2D 详情 <Info size={13} />

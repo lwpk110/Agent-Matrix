@@ -834,6 +834,7 @@ export default function App() {
               source: runtimeEvent.source,
               eventId: runtimeEvent.eventId || "",
               eventName: hookEventName,
+              toolName: runtimeEvent.toolName,
               sessionId,
               turnId: runtimeEvent.turnId,
               toolUseId: runtimeEvent.toolUseId,
@@ -1639,11 +1640,11 @@ export default function App() {
   ]);
 
   if (["/codex", "/codex/prototype"].includes(window.location.pathname)) {
-    return <CodexSessionPrototype />;
+    return <CodexSessionPrototype logs={logs} connectionState={wsState} realStatus={realStatus} />;
   }
 
   if (window.location.pathname === "/codex/3d") {
-    return <Codex3DTopology />;
+    return <Codex3DTopology logs={logs} />;
   }
 
   if (window.location.pathname === "/codex/runtime") {

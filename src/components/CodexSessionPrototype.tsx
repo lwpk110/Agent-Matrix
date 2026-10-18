@@ -29,6 +29,11 @@ import {
 import "./CodexSessionPrototype.css";
 import { RuntimeParticles } from "./RuntimeParticles";
 import { RuntimeTelemetry } from "./RuntimeTelemetry";
+import { RuntimeLeafTopology, type LeafPreviewAnchor } from "./RuntimeLeafTopology";
+import { RuntimeResources } from "./RuntimeResources";
+import type { RuntimeLeaf } from "./runtimeLeafModel";
+import type { LogEntry, RealSystemStatus, WsConnectionState } from "../types/matrix";
+import { createCodexRuntimeSessionFromLogs } from "./codexRuntimeAdapter";
 import "./RuntimeObservatory.css";
 import {
   createCodexRuntimeMock,
@@ -42,6 +47,7 @@ import {
   MockEventCard,
   downloadMockSession,
   statusLabels,
+  ModelIdentity,
 } from "./CodexMockDetails";
 
 type Kind =
@@ -201,135 +207,6 @@ const nodes = [
   ...steps.slice(7),
 ];
 
-type StarPeer = {
-  id?: StepId;
-  title: string;
-  relation: string;
-  tone: "cyan" | "violet" | "amber" | "green";
-};
-
-const starTopology: Record<StepId, StarPeer[]> = {
-  input: [
-    { id: "context", title: "上下文组装", relation: "下一步", tone: "cyan" },
-    { title: "会话历史", relation: "随回合携带", tone: "violet" },
-    { title: "权限边界", relation: "约束", tone: "amber" },
-  ],
-  context: [
-    { id: "input", title: "用户输入", relation: "来源", tone: "cyan" },
-    { id: "prompt", title: "提示词编排", relation: "组合", tone: "violet" },
-    { id: "skill", title: "Skill 能力", relation: "按需加入", tone: "violet" },
-    { id: "model", title: "模型调用", relation: "发送", tone: "green" },
-  ],
-  prompt: [
-    { id: "context", title: "上下文", relation: "读取", tone: "cyan" },
-    { id: "skill", title: "Skill 指南", relation: "补充规则", tone: "violet" },
-    { id: "model", title: "模型调用", relation: "请求", tone: "green" },
-  ],
-  skill: [
-    { id: "prompt", title: "提示词编排", relation: "提供规范", tone: "violet" },
-    { id: "context", title: "上下文", relation: "写入资料", tone: "cyan" },
-    { id: "model", title: "模型调用", relation: "可用能力", tone: "green" },
-  ],
-  model: [
-    { id: "prompt", title: "提示词编排", relation: "接收消息", tone: "cyan" },
-    { id: "gate", title: "权限门禁", relation: "请求检查", tone: "amber" },
-    { id: "tool", title: "工具执行", relation: "发起调用", tone: "green" },
-    { id: "output", title: "返回用户", relation: "直接回答", tone: "violet" },
-  ],
-  hook: [
-    { id: "model", title: "模型调用", relation: "触发", tone: "green" },
-    { id: "gate", title: "权限门禁", relation: "观察前置", tone: "amber" },
-    { title: "运行事件", relation: "记录状态", tone: "cyan" },
-  ],
-  gate: [
-    { id: "hook", title: "Hook 观测", relation: "进入检查", tone: "cyan" },
-    { id: "tool", title: "本地工具", relation: "允许执行", tone: "green" },
-    { id: "mcp", title: "MCP 连接器", relation: "允许调用", tone: "violet" },
-    { title: "用户确认", relation: "需要时等待", tone: "amber" },
-  ],
-  tool: [
-    { id: "gate", title: "权限门禁", relation: "通过后运行", tone: "amber" },
-    { id: "search", title: "搜索", relation: "读取资料", tone: "cyan" },
-    { id: "model", title: "模型调用", relation: "返回结果", tone: "green" },
-  ],
-  mcp: [
-    { id: "gate", title: "权限门禁", relation: "通过后调用", tone: "amber" },
-    { id: "search", title: "搜索", relation: "外部资料", tone: "cyan" },
-    { id: "model", title: "模型调用", relation: "返回结果", tone: "green" },
-  ],
-  search: [
-    { id: "tool", title: "本地工具", relation: "rg / 文件", tone: "cyan" },
-    { id: "mcp", title: "MCP 连接器", relation: "网页资料", tone: "violet" },
-    { id: "context", title: "上下文", relation: "加入证据", tone: "green" },
-  ],
-  output: [
-    { id: "model", title: "模型调用", relation: "生成回答", tone: "green" },
-    { title: "工具结果", relation: "汇总证据", tone: "cyan" },
-    { id: "input", title: "用户", relation: "看到结果", tone: "violet" },
-  ],
-};
-
-const starPeerSlots = [
-  { x: 165, y: 51 },
-  { x: 282, y: 112 },
-  { x: 244, y: 204 },
-  { x: 86, y: 204 },
-];
-
-function HoverStarTopology({ nodeId, x, y }: { nodeId: StepId; x: number; y: number }) {
-  const center = nodes.find((node) => node.id === nodeId)!;
-  const CenterIcon = center.icon;
-  const peers = starTopology[nodeId].slice(0, starPeerSlots.length);
-  return (
-    <div
-      className="rt-hover-star"
-      style={{ left: x, top: y }}
-      aria-label={`${center.title}的关联拓扑`}
-    >
-      <div className="rt-star-head">
-        <span>RELATION MAP</span>
-        <strong>关联拓扑</strong>
-      </div>
-      <svg viewBox="0 0 330 250" aria-hidden="true">
-        <defs>
-          <filter id="rt-star-glow"><feGaussianBlur stdDeviation="2.8" /></filter>
-        </defs>
-        {peers.map((peer, index) => {
-          const slot = starPeerSlots[index];
-          return (
-            <g key={`${peer.title}-${index}`} className={`rt-star-edge is-${peer.tone}`}>
-              <line x1="165" y1="128" x2={slot.x} y2={slot.y + 21} />
-              <circle cx={slot.x} cy={slot.y + 21} r="2.5" />
-            </g>
-          );
-        })}
-        <circle className="rt-star-core-halo" cx="165" cy="128" r="48" filter="url(#rt-star-glow)" />
-      </svg>
-      <div className="rt-star-center">
-        <span><CenterIcon size={15} /></span>
-        <strong>{center.title}</strong>
-        <small>{center.subtitle}</small>
-      </div>
-      {peers.map((peer, index) => {
-        const slot = starPeerSlots[index];
-        const PeerIcon = peer.id ? nodes.find((node) => node.id === peer.id)?.icon : Network;
-        return (
-          <div
-            key={`${peer.title}-label`}
-            className={`rt-star-peer is-${peer.tone}`}
-            style={{ left: slot.x, top: slot.y }}
-          >
-            <span>{PeerIcon && <PeerIcon size={11} />}</span>
-            <strong>{peer.title}</strong>
-            <small>{peer.relation}</small>
-          </div>
-        );
-      })}
-      <div className="rt-star-caption"><i />悬浮查看关系 · 点击进入详情</div>
-    </div>
-  );
-}
-
 function Tag({ kind }: { kind: Kind }) {
   const { label, icon: Icon } = kinds[kind];
   return (
@@ -376,7 +253,15 @@ function GraphNode({
   );
 }
 
-export function CodexSessionPrototype() {
+export function CodexSessionPrototype({
+  logs = [],
+  connectionState = "simulation",
+  realStatus,
+}: {
+  logs?: LogEntry[];
+  connectionState?: WsConnectionState;
+  realStatus?: RealSystemStatus | null;
+}) {
   const reducedMotion = useReducedMotion();
   const [selected, setSelected] = useState<StepId | null>(() => {
     const candidate = new URLSearchParams(window.location.search).get("node");
@@ -389,7 +274,19 @@ export function CodexSessionPrototype() {
   const [progress, setProgress] = useState(Infinity);
   const [draft, setDraft] = useState(MOCK_USER_PROMPT);
   const [submitted, setSubmitted] = useState(MOCK_USER_PROMPT);
-  const session = useMemo(() => createCodexRuntimeMock(submitted), [submitted]);
+  const liveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs), [logs]);
+  const demoSession = useMemo(() => createCodexRuntimeMock(submitted), [submitted]);
+  const session = liveSession || demoSession;
+  const liveMode = Boolean(liveSession);
+  const observedLocalCalls = session.calls.filter(call => call.type === "local").length;
+  const observedMcpCalls = session.calls.filter(call => call.type === "mcp").length;
+  const observedPermissions = session.events.filter(event => event.node === "gate").length;
+  const observedSkills = [...new Set(session.events.filter(event => event.node === "skill").map(event => event.title))];
+  const observedMcpServers = [...new Set(session.calls.filter(call => call.type === "mcp").map(call => call.name.split("/")[0]))];
+  const observedLocalTools = [...new Set(session.calls.filter(call => call.type === "local").map(call => call.name))];
+  const observedSearches = session.events.filter(event => event.node === "search");
+  const observedHookStarts = session.events.filter(event => /PreToolUse|BeforeTool/i.test(event.name)).length;
+  const observedHookFinishes = session.events.filter(event => /PostToolUse/i.test(event.name)).length;
   const [detailTab, setDetailTab] = useState<"story" | "evidence" | "events">(
     "evidence",
   );
@@ -398,7 +295,9 @@ export function CodexSessionPrototype() {
   const [showAll, setShowAll] = useState(false);
   const [callFilter, setCallFilter] = useState<string | null>(null);
   const [focusedEvent, setFocusedEvent] = useState<string | null>(null);
-  const [hoveredNode, setHoveredNode] = useState<{ id: StepId; x: number; y: number } | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<LeafPreviewAnchor | null>(null);
+  const previewTimers = useRef<{ open?: number; close?: number }>({});
+  const previewSource = useRef<HTMLElement | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
   const closeButton = useRef<HTMLButtonElement | null>(null);
   const drawer = useRef<HTMLElement | null>(null);
@@ -471,6 +370,10 @@ export function CodexSessionPrototype() {
     };
   }, [detailOpen]);
   const select = (id: StepId, source?: HTMLButtonElement) => {
+    window.clearTimeout(previewTimers.current.open);
+    window.clearTimeout(previewTimers.current.close);
+    previewSource.current = null;
+    setHoveredNode(null);
     if (source) opener.current = source;
     setSelected(id);
     setDetailTab("evidence");
@@ -508,23 +411,65 @@ export function CodexSessionPrototype() {
     setFocusedEvent(event.id);
     setDetailTab("events");
   };
-  const updateHoveredNode = (target: Element | null) => {
-    const map = mapRef.current;
-    const runtimeTarget = target?.closest<HTMLElement>('[data-runtime-node]');
-    if (!map || !runtimeTarget) return;
-    const rawId = runtimeTarget.dataset.runtimeNode;
-    const id = rawId === "result" ? "hook" : rawId;
-    if (!id || !nodes.some((node) => node.id === id)) return;
-    const mapRect = map.getBoundingClientRect();
-    const targetRect = runtimeTarget.getBoundingClientRect();
-    const targetX = targetRect.left - mapRect.left + targetRect.width / 2;
-    const targetY = targetRect.top - mapRect.top + targetRect.height / 2;
-    const xSide = targetX > mapRect.width * 0.58 ? -1 : 1;
-    const ySide = targetY > mapRect.height * 0.62 ? -1 : targetY < mapRect.height * 0.28 ? 1 : 0;
-    const x = Math.min(mapRect.width - 182, Math.max(182, targetX + xSide * 174));
-    const y = Math.min(mapRect.height - 142, Math.max(142, targetY + ySide * 142));
-    setHoveredNode({ id: id as StepId, x, y });
+  const keepPreview = () => {
+    window.clearTimeout(previewTimers.current.close);
   };
+  const closePreview = () => {
+    window.clearTimeout(previewTimers.current.open);
+    window.clearTimeout(previewTimers.current.close);
+    previewSource.current = null;
+    setHoveredNode(null);
+  };
+  const leavePreview = () => {
+    window.clearTimeout(previewTimers.current.open);
+    window.clearTimeout(previewTimers.current.close);
+    previewTimers.current.close = window.setTimeout(closePreview, 220);
+  };
+  const updateHoveredNode = (target: Element | null) => {
+    const source = target?.closest<HTMLElement>('[data-runtime-node]');
+    if (!source || selected) return;
+    const rawId = source.dataset.runtimeNode;
+    const id = rawId === "result" ? "hook" : rawId;
+    if (!id || !nodes.some(node => node.id === id)) return;
+    keepPreview();
+    if (source === previewSource.current && hoveredNode) return;
+    window.clearTimeout(previewTimers.current.open);
+    previewTimers.current.open = window.setTimeout(() => {
+      const rect = source.getBoundingClientRect();
+      previewSource.current = source;
+      setHoveredNode({ id: id as StepId, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom });
+    }, 180);
+  };
+  const inspectLeaf = (leaf: RuntimeLeaf) => {
+    if (!hoveredNode) return;
+    select(hoveredNode.id, previewSource.current?.matches("button") ? previewSource.current as HTMLButtonElement : undefined);
+    setCallFilter(leaf.callId ?? null);
+    setFocusedEvent(leaf.eventId ?? null);
+    setDetailTab("events");
+    closePreview();
+  };
+  useEffect(() => {
+    const dismiss = () => {
+      window.clearTimeout(previewTimers.current.open);
+      window.clearTimeout(previewTimers.current.close);
+      previewSource.current = null;
+      setHoveredNode(null);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    const scroll = (event: Event) => {
+      if (!(event.target instanceof Element) || !event.target.closest(".runtime-leaf-preview")) dismiss();
+    };
+    window.addEventListener("scroll", scroll, true);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("keydown", escape);
+    return () => {
+      window.clearTimeout(previewTimers.current.open);
+      window.clearTimeout(previewTimers.current.close);
+      window.removeEventListener("scroll", scroll, true);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("keydown", escape);
+    };
+  }, []);
 
   return (
     <div
@@ -543,9 +488,9 @@ export function CodexSessionPrototype() {
           <a className="cp-real-link cp-3d-link" href="/codex/3d">
             3D 拓扑 <Sparkles size={12} />
           </a>
-          <span className="cp-prototype">
+          <span className={`cp-prototype ${liveMode ? "is-live" : ""}`}>
             <span />
-            RUNTIME TRACE · PROTOTYPE
+            {liveMode ? "RUNTIME TRACE · LIVE" : "RUNTIME TRACE · PROTOTYPE"}
           </span>
           <a className="cp-real-link" href="/codex/runtime">
             打开真实监测 <ArrowRight size={12} />
@@ -564,15 +509,15 @@ export function CodexSessionPrototype() {
             </div>
           </div>
           <div className="cp-side-label">
-            当前会话 <span className="cp-mono">sess_demo_024</span>
+            当前会话 <span className="cp-mono">{session.id}</span>
           </div>
           <div className="rt-session-card">
-            <span className="rt-session-dot" /> DEMO SESSION
-            <strong>一个输入，完整运行轨迹</strong>
-            <span>5 轮模型 · 1 次审批 · 1 次重试</span>
+            <span className="rt-session-dot" /> {liveMode ? "LIVE SESSION" : "DEMO SESSION"}
+            <strong>{liveMode ? "真实 Codex 事件流" : "一个输入，完整运行轨迹"}</strong>
+            <span>{liveMode ? `${session.events.length} 条已采集事件 · ${session.calls.length} 次调用` : "5 轮模型 · 1 次审批 · 1 次重试"}</span>
             <div>
               <span>
-                TURN <b>08</b>
+                TURN <b>{session.turnId.slice(-8)}</b>
               </span>
               <span>
                 CALLS <b>{session.calls.length.toString().padStart(2, "0")}</b>
@@ -600,18 +545,18 @@ export function CodexSessionPrototype() {
           </nav>
           <div className="cp-side-bottom">
             <div className="rt-channel-list">
-              <span>本地工具 <b>03</b><i /></span>
-              <span>MCP 调用 <b>03</b><i /></span>
-              <span>权限确认 <b>01</b><i /></span>
+              <span><small>本地工具</small><b>{liveMode ? String(observedLocalCalls).padStart(2, "0") : "03"}</b><i /></span>
+              <span><small>MCP 调用</small><b>{liveMode ? String(observedMcpCalls).padStart(2, "0") : "03"}</b><i /></span>
+              <span><small>权限确认</small><b>{liveMode ? String(observedPermissions).padStart(2, "0") : "01"}</b><i /></span>
             </div>
             <div>
               <span className="cp-tiny-dot" />
-              可观测 session
+              {liveMode ? "真实可观测 session" : "可观测 session"}
             </div>
             <p>
               先看运行时全景，再点开任意事件。
               <br />
-              所有内容均为原型示例。
+              {liveMode ? "内容来自本机 Codex Hook / app-server。" : "所有内容均为原型示例。"}
             </p>
             <div className="cp-sidebar-key">
               <LockKeyhole size={12} />
@@ -624,7 +569,7 @@ export function CodexSessionPrototype() {
             <ListTree size={13} />
             Codex <ChevronRight size={12} />
             <span>Runtime trace</span>
-            <span className="cp-mono">/ sess_demo_024</span>
+            <span className="cp-mono">/ {session.id}{realStatus?.cwd ? ` · ${realStatus.cwd}` : ""}</span>
           </div>
           <section className="cp-page-heading">
             <div>
@@ -662,13 +607,16 @@ export function CodexSessionPrototype() {
           <div className="cp-runtime-status">
             <span className="cp-session-status">
               <span />
-              完整模拟会话 · MOCK
+              {liveMode ? "实时会话 · LIVE" : "完整模拟会话 · MOCK"}
             </span>
             <span className="cp-runtime-pill">
-              <Activity size={12} /> turn_08
+              <Activity size={12} /> {session.turnId}
             </span>
             <span className="cp-runtime-pill">
               <Zap size={12} /> AGENT LOOP
+            </span>
+            <span className="cp-runtime-pill">
+              <CircleDot size={12} /> {connectionState === "connected" ? "GATEWAY LIVE" : liveMode ? "HISTORY" : "SIMULATION"}
             </span>
             <span className="cp-runtime-hint">
               <i />
@@ -690,13 +638,29 @@ export function CodexSessionPrototype() {
               </button>
             ))}
           </nav>
+          <ModelIdentity session={session} />
+          <RuntimeResources events={visibleEvents} session={session} onInspect={(node, source) => select(node, source)} onCorrelate={correlate} />
           <section
             className="rt-map"
             ref={mapRef}
             aria-label="Codex runtime 完整链路"
             onMouseOver={(event) => updateHoveredNode(event.target as Element)}
             onFocusCapture={(event) => updateHoveredNode(event.target as Element)}
-            onMouseLeave={() => setHoveredNode(null)}
+            onMouseLeave={leavePreview}
+            onMouseOut={event => {
+              const next = event.relatedTarget as Element | null;
+              if (!next?.closest?.('[data-runtime-node], .runtime-leaf-preview')) leavePreview();
+            }}
+            onBlurCapture={event => {
+              const next = event.relatedTarget as Element | null;
+              if (!next?.closest?.('[data-runtime-node], .runtime-leaf-preview')) leavePreview();
+            }}
+            onKeyDown={event => {
+              if (event.key === "ArrowDown" && hoveredNode && (event.target as HTMLElement).matches('[data-runtime-node]')) {
+                event.preventDefault();
+                document.querySelector<HTMLButtonElement>(".rlp-leaf")?.focus();
+              }
+            }}
           >
             <RuntimeParticles
               host={mapRef}
@@ -712,15 +676,21 @@ export function CodexSessionPrototype() {
               <span>
                 {replaying
                   ? `${Math.min(progress, session.events.length)} / ${session.events.length} · ${currentEvent?.title || "开始回放"}`
-                  : "点击任意节点，逐层深入"}{" "}
+                  : "悬浮展开内部条目 · 点击查看执行详情"}{" "}
                 <span className="rt-blink" />
               </span>
             </div>
             {hoveredNode && !selected && (
-              <HoverStarTopology
-                nodeId={hoveredNode.id}
-                x={hoveredNode.x}
-                y={hoveredNode.y}
+              <RuntimeLeafTopology
+                key={hoveredNode.id}
+                anchor={hoveredNode}
+                session={session}
+                events={visibleEvents}
+                playing={playing}
+                onKeep={keepPreview}
+                onLeave={leavePreview}
+                onClose={closePreview}
+                onInspect={inspectLeaf}
               />
             )}
             <div className="rt-composer-row">
@@ -745,8 +715,9 @@ export function CodexSessionPrototype() {
                   <small>01 / INPUT</small>
                 </div>
                 <textarea
-                  aria-label="演示任务输入"
-                  value={draft}
+                  aria-label={liveMode ? "最近捕获的用户输入" : "演示任务输入"}
+                  value={liveMode ? session.prompt : draft}
+                  readOnly={liveMode}
                   onChange={(event) => setDraft(event.target.value)}
                   maxLength={1200}
                   rows={2}
@@ -754,11 +725,11 @@ export function CodexSessionPrototype() {
                 <div className="rt-composer-footer">
                   <span>
                     <LockKeyhole size={10} />
-                    固定 mock 剧本 · 不执行真实任务
+                    {liveMode ? "Codex 输入事件 · 只读展示" : "固定 mock 剧本 · 不执行真实任务"}
                   </span>
-                  <button disabled={!draft.trim()} type="submit">
+                  {!liveMode && <button disabled={!draft.trim()} type="submit">
                     发送演示 <Send size={12} />
-                  </button>
+                  </button>}
                 </div>
               </form>
               <span className="rt-horizontal-beam">
@@ -771,9 +742,11 @@ export function CodexSessionPrototype() {
                 stateClass={graphState("context")}
               >
                 <span className="rt-mini-tags">
-                  <span>会话历史</span>
-                  <span>工作区</span>
-                  <span>项目规则</span>
+                  {liveMode ? <>
+                    <span>{session.events.filter(event => event.node === "context").length} 条上下文事件</span>
+                    <span>{session.cwd === "未采集" ? "工作区未采集" : "工作区已采集"}</span>
+                    <span>规则文件未采集</span>
+                  </> : <><span>会话历史</span><span>工作区</span><span>项目规则</span></>}
                 </span>
               </GraphNode>
               <span className="rt-horizontal-beam">
@@ -786,8 +759,7 @@ export function CodexSessionPrototype() {
                 stateClass={graphState("prompt")}
               >
                 <span className="rt-mini-tags">
-                  <span>用户消息</span>
-                  <span>指令与工具定义</span>
+                  {liveMode ? <><span>用户消息已采集</span><span>完整提示词未采集</span></> : <><span>用户消息</span><span>指令与工具定义</span></>}
                 </span>
               </GraphNode>
             </div>
@@ -843,11 +815,10 @@ export function CodexSessionPrototype() {
                   stateClass={graphState("skill")}
                 >
                   <span className="rt-support-note">
-                    browser-inspection → 加入上下文
+                    {liveMode ? (observedSkills.length ? observedSkills.join(" · ") : "未观测到 Skill 激活") : "browser-inspection → 加入上下文"}
                   </span>
                   <span className="rt-mini-tags">
-                    <span>SKILL.md</span>
-                    <span>参考资料</span>
+                    {liveMode ? <><span>{observedSkills.length} 个 Skill 事件</span><span>正文未采集</span></> : <><span>SKILL.md</span><span>参考资料</span></>}
                   </span>
                 </GraphNode>
                 <div className="rt-support-explainer">
@@ -891,7 +862,7 @@ export function CodexSessionPrototype() {
                     <small>MODEL RUNTIME</small>
                   </span>
                   <span className="rt-model-caption">
-                    <span className="rt-blink" />5 轮请求 · 6 次工具调用
+                    <span className="rt-blink" />{liveMode ? `${session.rounds.length ? `${session.rounds.length} 次模型请求` : "模型请求数未采集"} · ${session.calls.length} 次调用` : "5 轮请求 · 6 次工具调用"}
                   </span>
                 </button>
                 <div className="rt-model-decision">
@@ -942,7 +913,7 @@ export function CodexSessionPrototype() {
                     <strong>权限与策略检查</strong>
                     <small>允许执行 / 请求确认 / 拒绝</small>
                   </span>
-                  <span className="rt-gate-status">1 次确认</span>
+                  <span className="rt-gate-status">{liveMode ? `${observedPermissions} 条门禁事件` : "1 次确认"}</span>
                   <ChevronRight size={13} />
                 </button>
                 <div className="rt-lane-beam">
@@ -956,7 +927,7 @@ export function CodexSessionPrototype() {
                     stateClass={graphState("tool")}
                   >
                     <span className="rt-tool-commands">
-                      exec_command · 3 次只读调用
+                      {liveMode ? `${observedLocalTools.length ? observedLocalTools.join(" · ") : "未观测到本地调用"} · ${observedLocalCalls} 次调用` : "exec_command · 3 次只读调用"}
                     </span>
                   </GraphNode>
                   <GraphNode
@@ -965,7 +936,7 @@ export function CodexSessionPrototype() {
                     stateClass={graphState("mcp")}
                   >
                     <span className="rt-tool-commands">
-                      2 个服务 · 3 次调用 · 1 次重试
+                      {liveMode ? `${observedMcpServers.length ? observedMcpServers.join(" · ") : "未观测到 MCP 调用"} · ${observedMcpCalls} 次调用` : "2 个服务 · 3 次调用 · 1 次重试"}
                     </span>
                   </GraphNode>
                 </div>
@@ -979,7 +950,7 @@ export function CodexSessionPrototype() {
                     <Search size={12} />
                   </span>
                   <strong>搜索</strong>
-                  <span>rg --files / React 官方文档</span>
+                  <span>{liveMode ? observedSearches.map(event => event.summary).join(" · ") || "未观测到搜索事件" : "rg --files / React 官方文档"}</span>
                   <ChevronRight size={10} />
                 </button>
                 <div className="rt-lane-beam">
@@ -995,13 +966,13 @@ export function CodexSessionPrototype() {
                   <Zap size={16} />
                   <span>
                     <strong>结果与状态回传</strong>
-                    <small>PostToolUse / 失败事件 · 按配置触发</small>
+                    <small>{liveMode ? `${observedHookStarts} 次执行前 · ${observedHookFinishes} 次执行后 Hook` : "PostToolUse / 失败事件 · 按配置触发"}</small>
                   </span>
                   <ChevronRight size={14} />
                 </button>
               </div>
             </div>
-            <RuntimeTelemetry events={visibleEvents} activeEvent={currentEvent} replaying={replaying} playing={playing} onEvent={openEvent} />
+            <RuntimeTelemetry events={visibleEvents} activeEvent={currentEvent} replaying={replaying} playing={playing} isReal={liveMode} onEvent={openEvent} />
             <div className="rt-return-path">
               <span>
                 <ArrowLeft size={12} />
@@ -1022,47 +993,47 @@ export function CodexSessionPrototype() {
               </button>
             </div>
           </section>
-          <section className="mx-session-overview" aria-label="模拟会话总览">
+          <section className="mx-session-overview" aria-label={liveMode ? "实时会话总览" : "模拟会话总览"}>
             <div>
               <span>MODEL ROUNDS</span>
               <strong>
-                {session.rounds.length}
-                <small>轮模型请求</small>
+                {liveMode && !session.rounds.length ? "—" : session.rounds.length}
+                <small>{liveMode ? "已关联模型请求" : "轮模型请求"}</small>
               </strong>
             </div>
             <div>
               <span>TOOL CALLS</span>
               <strong>
                 {session.calls.length}
-                <small>3 本地 / 3 MCP</small>
+                <small>{liveMode ? `${observedLocalCalls} 本地 / ${observedMcpCalls} MCP` : "3 本地 / 3 MCP"}</small>
               </strong>
             </div>
             <div>
               <span>APPROVAL & RETRY</span>
               <strong>
-                1 / 1<small>一次确认 / 一次重试</small>
+                {liveMode ? `${observedPermissions} / —` : "1 / 1"}<small>{liveMode ? "门禁事件 / 重试未采集" : "一次确认 / 一次重试"}</small>
               </strong>
             </div>
             <div>
-              <span>TRACE / TOKENS</span>
+              <span>TRACE EVENTS</span>
               <strong>
                 {session.events.length}
-                <small>事件 · {session.usage.outputTokens} 输出 token</small>
+                <small>{liveMode ? "Codex Hook / app-server 事件" : "完整模拟场景事件"}</small>
               </strong>
             </div>
           </section>
           <section
             className="cp-activity mx-trace"
-            aria-label="完整模拟事件轨迹"
+            aria-label={liveMode ? "Codex 实时事件轨迹" : "完整模拟事件轨迹"}
           >
             <div className="cp-activity-heading">
               <span>
                 <Terminal size={15} />
-                完整事件轨迹{" "}
-                <small>{session.events.length} 条记录 · 17.1 秒模拟会话</small>
+                {liveMode ? "已采集事件轨迹" : "完整事件轨迹"}{" "}
+                <small>{session.events.length} 条记录 · {liveMode ? (session.durationMs === null ? "持续时间未采集" : `${(session.durationMs / 1000).toFixed(1)} 秒`) : "17.1 秒模拟会话"}</small>
               </span>
               <button onClick={() => downloadMockSession(session)}>
-                导出 JSON <ArrowRight size={12} />
+                {liveMode ? "导出 Runtime JSON" : "导出 JSON"} <ArrowRight size={12} />
               </button>
             </div>
             <div className="mx-trace-toolbar">
@@ -1158,15 +1129,14 @@ export function CodexSessionPrototype() {
               </button>
             )}
             <p className="mx-trace-caption">
-              模拟数据 ·
-              点击节点先看具体内容，再追踪事件与原始字段。输入框仅替换用户消息；模型、工具和审批结果均使用演示脚本。
+              {liveMode ? "LIVE · 事件来自本机 Codex Hook / app-server。未采集字段不会用演示数据补齐。" : "模拟数据 · 点击节点先看具体内容，再追踪事件与原始字段。输入框仅替换用户消息；模型、工具和审批结果均使用演示脚本。"}
             </p>
           </section>
           <footer className="cp-footer">
             <span>
               AGENT MATRIX <span>/</span> CODEX RUNTIME EXPLORER
             </span>
-            <span>原型数据 · 不执行真实任务</span>
+            <span>{liveMode ? "实时观测 · 只读展示" : "原型数据 · 不执行真实任务"}</span>
           </footer>
         </main>
       </div>
@@ -1215,10 +1185,11 @@ export function CodexSessionPrototype() {
             </div>
             <div className="cp-detail-title">
               <span className="cp-detail-eyebrow">
-                {activeStep.kicker} <span>MOCK · 完整数据</span>
+                {activeStep.kicker} <span>{liveMode ? "LIVE · 已观测字段" : "MOCK · 完整数据"}</span>
               </span>
               <h2 id="cp-detail-title">{activeStep.title}</h2>
               <p>{activeStep.subtitle}</p>
+              <ModelIdentity session={session} />
             </div>
             <div
               className="cp-detail-tabs"
@@ -1287,7 +1258,7 @@ export function CodexSessionPrototype() {
                   {callFilter ? (
                     <div className="mx-correlation">
                       <span>调用追踪 · {callFilter}</span>
-                      <p>模型请求 → Hook → 权限 → 执行 → 结果 → 上下文</p>
+                      <p>{liveMode ? (session.events.filter(event => event.callId === callFilter).map(event => event.title).join(" → ") || "未采集到可关联的调用事件") : "模型请求 → Hook → 权限 → 执行 → 结果 → 上下文"}</p>
                       <button
                         onClick={() => {
                           setCallFilter(null);

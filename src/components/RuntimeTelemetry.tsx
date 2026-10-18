@@ -2,20 +2,20 @@ import { Activity, ArrowUpRight, Pause, Radio } from "lucide-react";
 import type { MockRuntimeEvent } from "./codexRuntimeMock";
 import { statusLabels } from "./CodexMockDetails";
 
-export function RuntimeTelemetry({ events, activeEvent, replaying, playing, onEvent }: {
-  events: MockRuntimeEvent[]; activeEvent?: MockRuntimeEvent; replaying: boolean; playing: boolean;
+export function RuntimeTelemetry({ events, activeEvent, replaying, playing, isReal = false, onEvent }: {
+  events: MockRuntimeEvent[]; activeEvent?: MockRuntimeEvent; replaying: boolean; playing: boolean; isReal?: boolean;
   onEvent: (event: MockRuntimeEvent, source: HTMLButtonElement) => void;
 }) {
   const last = activeEvent ?? events.at(-1);
   const buckets = Array.from({ length: 24 }, () => 0);
-  // Histogram of actual mock-event offsets, rather than fabricated system metrics.
+  // The density strip is derived from the timestamps of visible events.
   events.forEach(event => { buckets[Math.min(23, Math.floor(event.offsetMs / 800))]++; });
   const peak = Math.max(1, ...buckets);
   const path = buckets.map((count, i) => `${i ? "L" : "M"}${i * 5},${26 - count / peak * 22}`).join(" ");
   return <div className="rt-telemetry">
     <div className="rt-telemetry-state">
       {playing ? <Radio size={15} /> : <Pause size={15} />}
-      <span><strong>{replaying ? playing ? "正在回放" : "回放已暂停" : "完整会话预览"}</strong><small>{events.length} 条可观测事件 · MOCK</small></span>
+      <span><strong>{replaying ? playing ? "正在回放" : "回放已暂停" : isReal ? "实时会话观测" : "完整会话预览"}</strong><small>{events.length} 条可观测事件 · {isReal ? "LIVE" : "MOCK"}</small></span>
     </div>
     <button className={`rt-event-signal ${last?.status === "waiting" ? "is-waiting" : last?.status === "failed" ? "is-failed" : ""}`}
       disabled={!last} onClick={event => last && onEvent(last, event.currentTarget)}>

@@ -46,7 +46,10 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const anchors = new Map<string, Anchor>();
       element.querySelectorAll<HTMLElement>("[data-runtime-node]").forEach(node => {
-        const r = node.getBoundingClientRect();
+        const target = node.dataset.runtimeNode === "model"
+          ? node.querySelector<SVGElement>(".rt-core-reticle") ?? node
+          : node;
+        const r = target.getBoundingClientRect();
         anchors.set(node.dataset.runtimeNode!, { x: r.left - bounds.left + r.width / 2, y: r.top - bounds.top + r.height / 2, left: r.left - bounds.left, right: r.right - bounds.left, top: r.top - bounds.top, bottom: r.bottom - bounds.top });
       });
       traces = [];
@@ -69,7 +72,16 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
         const left = id === "tool", side = left ? a.left - 9 : a.right + 9;
         return [{ x: a.x, y: a.bottom }, { x: a.x, y: a.bottom + 8 }, { x: side, y: a.bottom + 8 }, { x: side, y: b.y }, { x: left ? b.left : b.right, y: b.y }];
       }, "#bca8f7"));
-      add("result", "model", (a, b) => width <= 800 ? [{ x: a.left, y: a.y }, { x: 8, y: a.y }, { x: 8, y: b.y + 38 }, { x: b.left, y: b.y + 38 }] : [{ x: a.left, y: a.y }, { x: (a.left + b.right) / 2, y: a.y }, { x: (a.left + b.right) / 2, y: b.y + 38 }, { x: b.right, y: b.y + 38 }], "#bca8f7");
+      add("result", "model", (a, b) => {
+        const side = width <= 800 ? -1 : 1;
+        const scale = Math.min(b.right - b.left, b.bottom - b.top) / 300;
+        // Match the diagonal connector endpoint in rt-core-reticle's 300x300 viewBox.
+        const port = { x: b.x + side * 108 * scale, y: b.y + 108 * scale };
+        const approach = { x: port.x + side * 18 * scale, y: port.y + 18 * scale };
+        return width <= 800
+          ? [{ x: a.left, y: a.y }, { x: 8, y: a.y }, { x: 8, y: approach.y }, approach, port]
+          : [{ x: a.left, y: a.y }, { x: (a.left + b.right) / 2, y: a.y }, { x: (a.left + b.right) / 2, y: approach.y }, approach, port];
+      }, "#bca8f7");
       add("model", "output", down);
       dirty = true;
     };
