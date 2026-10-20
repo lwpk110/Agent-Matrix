@@ -12,6 +12,8 @@ import child_process from 'child_process';
 import os from 'os';
 import fs from 'fs';
 import { CodexRuntimeEvent, correlateCodexRuntimeEvent, isLoopbackAddress, normalizeCodexHookPayload, reconcileCodexRuntimeHistory } from './src/services/codexRuntime';
+import { ClaudeRuntimeEvent, correlateClaudeRuntimeEvent, normalizeClaudeHookPayload, reconcileClaudeRuntimeHistory } from './src/services/claudeRuntime';
+import { mergeClaudeRuntimeSettings } from './src/services/claudeSettings';
 import { CodexAppServerMonitor } from './src/services/codexAppServer';
 import { readCodexRolloutTelemetry } from './src/services/codexRolloutTelemetry';
 import { readCodexSkillSources } from './src/services/codexSkillSources';
@@ -51,9 +53,13 @@ const CODEX_EVENT_JOURNAL_LIMIT_BYTES = 8 * 1024 * 1024;
 const CODEX_EVENT_JOURNAL_PATH = process.env.CODEX_EVENT_JOURNAL_PATH || path.join(process.cwd(), '.codex', 'runtime-events.jsonl');
 const CODEX_APP_SERVER_STATE_PATH = process.env.CODEX_APP_SERVER_STATE_PATH || path.join(process.cwd(), '.codex', 'runtime-appserver-state.json');
 let codexEventsHistory: CodexRuntimeEvent[] = loadCodexRuntimeHistory();
+const CLAUDE_EVENT_JOURNAL_PATH = process.env.CLAUDE_EVENT_JOURNAL_PATH || path.join(process.cwd(), '.claude', 'runtime-events.jsonl');
+let claudeEventsHistory: ClaudeRuntimeEvent[] = loadClaudeRuntimeHistory();
 const localWebSocketClients = new Set<WebSocket>();
 const CODEX_HOOK_PORT = Number(process.env.CODEX_HOOK_PORT) || 7789;
+const CLAUDE_HOOK_PORT = Number(process.env.AGENT_MATRIX_CLAUDE_HOOK_PORT) || 7788;
 let codexHookGatewayState: 'starting' | 'listening' | 'offline' = 'starting';
+let claudeHookGatewayState: 'starting' | 'listening' | 'offline' = 'starting';
 let codexAppServerState: 'starting' | 'listening' | 'offline' = 'starting';
 let codexAppServerMonitor: CodexAppServerMonitor | undefined;
 
@@ -84,6 +90,22 @@ function loadCodexRuntimeHistory(): CodexRuntimeEvent[] {
   }
 }
 
+function isClaudeRuntimeEvent(value: unknown): value is ClaudeRuntimeEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const event = value as Partial<ClaudeRuntimeEvent>;
+  return event.provider === 'claude' && event.source === 'claude-hook' && typeof event.eventId === 'string' && typeof event.hookEventName === 'string' && typeof event.phase === 'string' && typeof event.timestamp === 'string' && !!event.payload && typeof event.payload === 'object';
+}
+
+function loadClaudeRuntimeHistory(): ClaudeRuntimeEvent[] {
+  try {
+    if (!fs.existsSync(CLAUDE_EVENT_JOURNAL_PATH)) return [];
+    const events = fs.readFileSync(CLAUDE_EVENT_JOURNAL_PATH, 'utf8').split(/\r?\n/).filter(Boolean).flatMap((line) => {
+      try { const parsed: unknown = JSON.parse(line); return isClaudeRuntimeEvent(parsed) ? [parsed] : []; } catch { return []; }
+    });
+    return reconcileClaudeRuntimeHistory(events.slice(-CODEX_EVENT_HISTORY_LIMIT));
+  } catch { return []; }
+}
+
 function persistCodexRuntimeEvent(event: CodexRuntimeEvent) {
   try {
     fs.mkdirSync(path.dirname(CODEX_EVENT_JOURNAL_PATH), { recursive: true });
@@ -97,6 +119,16 @@ function persistCodexRuntimeEvent(event: CodexRuntimeEvent) {
   }
 }
 
+function persistClaudeRuntimeEvent(event: ClaudeRuntimeEvent) {
+  try {
+    fs.mkdirSync(path.dirname(CLAUDE_EVENT_JOURNAL_PATH), { recursive: true });
+    fs.appendFileSync(CLAUDE_EVENT_JOURNAL_PATH, `${JSON.stringify(event)}\n`, 'utf8');
+    if (fs.statSync(CLAUDE_EVENT_JOURNAL_PATH).size > CODEX_EVENT_JOURNAL_LIMIT_BYTES) fs.writeFileSync(CLAUDE_EVENT_JOURNAL_PATH, `${claudeEventsHistory.map((item) => JSON.stringify(item)).join('\n')}\n`, 'utf8');
+  } catch {
+    // 观测持久化失败不能阻断 Claude Code。
+  }
+}
+
 function registerLocalWebSocketClient(client: WebSocket) {
   localWebSocketClients.add(client);
   client.on('close', () => localWebSocketClients.delete(client));
@@ -107,6 +139,7 @@ function registerLocalWebSocketClient(client: WebSocket) {
     for (const event of codexEventsHistory) {
       client.send(JSON.stringify({ type: 'codex_runtime', payload: event }));
     }
+    for (const event of claudeEventsHistory) client.send(JSON.stringify({ type: 'claude_runtime', payload: event }));
   }
 }
 
@@ -173,8 +206,11 @@ function getRealSystemStatus() {
     activeClientsCount: wss.clients.size,
     totalRealEvents: realEventsHistory.length,
     totalCodexEvents: codexEventsHistory.length,
+    totalClaudeEvents: claudeEventsHistory.length,
     codexHookPort: CODEX_HOOK_PORT,
     codexHookGatewayState,
+    claudeHookPort: CLAUDE_HOOK_PORT,
+    claudeHookGatewayState,
     codexAppServerState,
     hasClaudeHooks: checkClaudeHooksConfigured(),
     timestamp: new Date().toISOString(),
@@ -249,24 +285,19 @@ app.post('/api/real/exec', (req, res) => {
 // One-click setup Claude Code settings.json hooks in current repo
 app.post('/api/real/setup-claude-hooks', (req, res) => {
   try {
+    if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Claude settings are restricted to localhost' });
     const claudeDir = path.join(process.cwd(), '.claude');
     if (!fs.existsSync(claudeDir)) {
       fs.mkdirSync(claudeDir, { recursive: true });
     }
     const settingsPath = path.join(claudeDir, 'settings.json');
-    const settingsContent = {
-      hooks: {
-        PreToolUse: "curl -s -X POST http://localhost:7788/hook/pre -H 'Content-Type: application/json' -d @-",
-        PostToolUse: "curl -s -X POST http://localhost:7788/hook/post -H 'Content-Type: application/json' -d @-",
-      },
-      security: {
-        gatekeeperEnabled: true,
-        gatekeeperPort: 7788,
-        dashboardUrl: "http://localhost:3000",
-      },
-    };
-
-    fs.writeFileSync(settingsPath, JSON.stringify(settingsContent, null, 2), 'utf-8');
+    let existing: Record<string, unknown> = {};
+    if (fs.existsSync(settingsPath)) {
+      try { existing = JSON.parse(fs.readFileSync(settingsPath, 'utf8')); }
+      catch { return res.status(409).json({ error: 'Existing .claude/settings.json is invalid JSON; it was not changed' }); }
+    }
+    const settingsContent = mergeClaudeRuntimeSettings(existing, path.join('.claude', 'hooks', 'claude-runtime-hook.mjs'), `http://127.0.0.1:${CLAUDE_HOOK_PORT}/hook/claude`);
+    fs.writeFileSync(settingsPath, `${JSON.stringify(settingsContent, null, 2)}\n`, 'utf-8');
     console.log(`\x1b[1;32m[HOOKS INJECTED]\x1b[0m Created ${settingsPath}`);
 
     // Broadcast update
@@ -446,12 +477,31 @@ app.post('/hook/codex', (req, res) => {
   res.status(202).json({ status: 'accepted' });
 });
 
+app.post('/hook/claude', (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Claude telemetry is restricted to localhost' });
+  const event = normalizeClaudeHookPayload(req.body);
+  if (!event) return res.status(400).json({ error: 'Invalid Claude hook payload' });
+  const reconciled = reconcileClaudeRuntimeHistory([...claudeEventsHistory, event]);
+  const correlatedEvent = reconciled.at(-1)!;
+  claudeEventsHistory = reconciled;
+  if (claudeEventsHistory.length > CODEX_EVENT_HISTORY_LIMIT) claudeEventsHistory.shift();
+  persistClaudeRuntimeEvent(correlatedEvent);
+  broadcastLocal({ type: 'claude_runtime', payload: correlatedEvent });
+  res.status(202).json({ status: 'accepted' });
+});
+
 app.get('/api/real/codex-events', (req, res) => {
   if (!isLoopbackAddress(req.socket.remoteAddress)) {
     return res.status(403).json({ error: 'Codex telemetry is restricted to localhost' });
   }
   res.setHeader('Cache-Control', 'no-store');
   res.json({ events: codexEventsHistory, retained: codexEventsHistory.length, journaled: true });
+});
+
+app.get('/api/real/claude-events', (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Claude telemetry is restricted to localhost' });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ events: claudeEventsHistory, retained: claudeEventsHistory.length, journaled: true });
 });
 
 app.get('/api/real/codex-rollout', async (req, res) => {
@@ -499,6 +549,14 @@ app.delete('/api/real/codex-events', (req, res) => {
   } catch {}
   codexAppServerMonitor?.checkpoint();
   broadcastLocal({ type: 'codex_runtime_cleared', payload: { timestamp: new Date().toISOString() } });
+  res.sendStatus(204);
+});
+
+app.delete('/api/real/claude-events', (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Claude telemetry is restricted to localhost' });
+  claudeEventsHistory = [];
+  try { fs.rmSync(CLAUDE_EVENT_JOURNAL_PATH, { force: true }); } catch {}
+  broadcastLocal({ type: 'claude_runtime_cleared', payload: { timestamp: new Date().toISOString() } });
   res.sendStatus(204);
 });
 
@@ -572,6 +630,7 @@ async function start() {
 
     gatewayServer.listen(port, '127.0.0.1', () => {
       if (port === CODEX_HOOK_PORT) codexHookGatewayState = 'listening';
+      if (port === CLAUDE_HOOK_PORT) claudeHookGatewayState = 'listening';
       console.log(`\x1b[1;32m⚡ Embedded Agent Runtime Gateway listening on http://127.0.0.1:${port}\x1b[0m`);
     });
     gatewayWss.on('error', () => {
@@ -579,12 +638,13 @@ async function start() {
     });
     gatewayServer.on('error', () => {
       if (port === CODEX_HOOK_PORT) codexHookGatewayState = 'offline';
+      if (port === CLAUDE_HOOK_PORT) claudeHookGatewayState = 'offline';
       // Another local integration may already own this optional port.
     });
   };
 
   try {
-    [...new Set([7788, CODEX_HOOK_PORT])].forEach(startLocalGateway);
+    [...new Set([CLAUDE_HOOK_PORT, CODEX_HOOK_PORT])].forEach(startLocalGateway);
   } catch {}
 
   if (process.env.CODEX_APP_SERVER_MONITOR !== '0') {

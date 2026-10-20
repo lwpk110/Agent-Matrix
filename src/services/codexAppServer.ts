@@ -18,15 +18,15 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
-function safeValue(value: unknown, depth = 0): unknown {
+function safeValue(value: unknown, depth = 0, stringLimit = 1200): unknown {
   if (depth >= 4) return '[TRUNCATED]';
-  if (typeof value === 'string') return redactRuntimeText(value).slice(0, 1200);
-  if (Array.isArray(value)) return value.slice(0, 20).map((item) => safeValue(item, depth + 1));
+  if (typeof value === 'string') return redactRuntimeText(value).slice(0, stringLimit);
+  if (Array.isArray(value)) return value.slice(0, 20).map((item) => safeValue(item, depth + 1, stringLimit));
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(Object.entries(value as JsonRecord)
     .filter(([key]) => !/transcript_path|rollout_path|(?:^|_)path$/i.test(key))
     .slice(0, 40)
-    .map(([key, item]) => [key, REDACTED_FIELDS.test(key) ? '[REDACTED]' : safeValue(item, depth + 1)]));
+    .map(([key, item]) => [key, REDACTED_FIELDS.test(key) ? '[REDACTED]' : safeValue(item, depth + 1, stringLimit)]));
 }
 
 function eventId(threadId: string, turnId: string, itemId: string, suffix = '') {
@@ -47,7 +47,7 @@ function appEvent(args: {
   const turn = args.turn;
   const timestampPrecision = turn.startedAt ? 'turn-start' : 'observed';
   const timestamp = turn.startedAt ? new Date(turn.startedAt * 1000).toISOString() : new Date().toISOString();
-  const sanitized = safeValue(args.payload || {}) as JsonRecord;
+  const sanitized = safeValue(args.payload || {}, 0, args.name === 'UserPromptSubmit' ? 4000 : 1200) as JsonRecord;
   const snapshot = MUTABLE_ITEM_EVENTS.has(args.name)
     ? createHash('sha256').update(JSON.stringify(sanitized)).digest('hex').slice(0, 16)
     : args.suffix;

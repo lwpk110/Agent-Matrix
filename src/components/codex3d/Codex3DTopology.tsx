@@ -186,7 +186,7 @@ function nodeRole(node: RuntimeNode) {
   } as Record<MockNodeId, string>)[node.id];
 }
 
-export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
+export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: LogEntry[]; prototypeMode?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const labelRefs = useRef(new Map<MockNodeId, HTMLButtonElement>());
   const [selected, setSelected] = useState<MockNodeId | null>(null);
@@ -823,7 +823,7 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
   return (
     <main className="codex-3d-page">
       <header className="codex-3d-header">
-        <a href="/codex" className="codex-3d-back">
+        <a href={prototypeMode ? '/codex/prototype' : '/codex'} className="codex-3d-back">
           <ArrowLeft size={15} />
           返回 2D Runtime
         </a>
@@ -839,6 +839,9 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
           </p>
         </div>
         <div className="codex-3d-actions">
+          <a href={prototypeMode ? '/codex/3d' : '/codex/prototype/3d'} className="codex-3d-back">
+            {prototypeMode ? '对比实时 3D' : '查看模拟原型'}
+          </a>
           <button className={lineageOpen ? "is-selected" : ""} aria-expanded={lineageOpen} onClick={() => setLineageOpen(value => !value)}>
             <Network size={14} />会话血缘
           </button>
@@ -953,7 +956,7 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
           </div>
           <span><i />{replaying ? paused ? "回放已暂停" : "会话回放" : "拓扑预览"}<small>{liveMode ? `${session.id} / ${session.turnId}` : "MOCK SESSION / TURN 08"}</small></span>
           <div><small>{currentEvent?.name ?? "AGENT RUNTIME / DATA FLOW"}</small><strong>{currentEvent?.title ?? "输入 → 上下文 → 模型 ⇄ 工具 → 返回用户"}</strong></div>
-          <a href={`/codex${currentEvent ? `?node=${currentEvent.node}` : ""}`}>查看事件详情 <Info size={13} /></a>
+          <a href={`${prototypeMode ? '/codex/prototype' : '/codex'}${currentEvent ? `?node=${currentEvent.node}` : ""}`}>查看事件详情 <Info size={13} /></a>
         </div>
         {lineageOpen && (
           <aside className="codex-3d-lineage" aria-label="会话知识图谱">
@@ -1020,7 +1023,7 @@ export function Codex3DTopology({ logs = [] }: { logs?: LogEntry[] }) {
               </div>
             )) : <p className="codex-3d-events-empty">当前会话没有该节点的事件记录</p>}
           </div>
-          <a href={`/codex?node=${selectedNode.id}`}>
+          <a href={`${prototypeMode ? '/codex/prototype' : '/codex'}?node=${selectedNode.id}`}>
             进入 2D 详情 <Info size={13} />
           </a>
         </aside>

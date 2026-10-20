@@ -17,7 +17,7 @@ export function pairRuntimeLogs(logs: LogEntry[], incoming: NonNullable<LogEntry
   if (!incoming.toolUseId || incoming.correlationStatus !== 'paired' || !incoming.pairedEventId) return logs;
   return logs.map((log) => {
     const other = log.runtimeEvent;
-    if (!other || other.eventId !== incoming.pairedEventId || other.sessionId !== incoming.sessionId ||
+    if (!other || other.provider !== incoming.provider || other.eventId !== incoming.pairedEventId || other.sessionId !== incoming.sessionId ||
       other.toolUseId !== incoming.toolUseId || (other.turnId && incoming.turnId && other.turnId !== incoming.turnId)) return log;
     return { ...log, runtimeEvent: { ...other, correlationStatus: 'paired', pairedEventId: incoming.eventId, observedIntervalMs: incoming.observedIntervalMs } };
   });

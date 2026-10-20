@@ -74,18 +74,13 @@ npm install
 
 ---
 
-### 方式 3：为 Claude Code 一键注入钩子
-在你的任意项目根目录执行这 1 行命令：
+### 方式 3：为 Claude Code 安全合并运行时观测 Hook
+在项目根目录执行：
 ```bash
-mkdir -p .claude && cat << 'EOF' > .claude/settings.json
-{
-  "hooks": {
-    "PreToolUse": "curl -s -X POST http://localhost:7788/hook/pre -H 'Content-Type: application/json' -d @-",
-    "PostToolUse": "curl -s -X POST http://localhost:7788/hook/post -H 'Content-Type: application/json' -d @-"
-  }
-}
-EOF
+node --import tsx scripts/configure-claude-runtime.mjs
 ```
+
+脚本按 Claude Code 官方 command Hook 结构，采集 `SessionStart`、提示提交、工具前后、失败、权限、压缩、子代理和停止事件，并通过本机 `127.0.0.1:7788/hook/claude` 上报。它会保留原有 settings、保留旧 `PreToolUse` / `PostToolUse` HITL 命令、幂等合并本项目 Hook；已有 JSON 无法解析时拒绝覆盖。打开 `/claude/runtime` 查看独立的会话链路。Claude journal 仅保留最近 2,000 条脱敏事件，使用 `.claude/runtime-events.jsonl` 持久化，重启后会经 REST/本机 WebSocket 重放。不会采集 transcript、隐藏系统上下文、私有推理或工具响应正文；工具前后显示的是 Hook 观测间隔，不是执行时长。
 
 ### 方式 4：查看 Codex CLI 真实运行事件
 

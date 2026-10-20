@@ -27,28 +27,7 @@ const VSCODE_EXTENSION_GUIDE = `# VS Code / Cursor 原生插件接入指南 (Zer
    # 在 VS Code 中按 F5 启动 Extension Development Host 即可立即体验！
 `;
 
-const QUICK_ONE_LINER_SH = `#!/usr/bin/env bash
-# ==============================================================================
-# 1 行命令自动配置 Claude Code 本地安全审计拦截钩子
-# 适用于当前项目工作区根目录
-# ==============================================================================
-
-mkdir -p .claude && cat << 'EOF' > .claude/settings.json
-{
-  "hooks": {
-    "PreToolUse": "curl -s -X POST http://localhost:7788/hook/pre -H 'Content-Type: application/json' -d @-",
-    "PostToolUse": "curl -s -X POST http://localhost:7788/hook/post -H 'Content-Type: application/json' -d @-"
-  },
-  "security": {
-    "gatekeeperEnabled": true,
-    "gatekeeperPort": 7788
-  }
-}
-EOF
-
-echo -e "\\033[1;32m[OK]\\033[0m .claude/settings.json 生产级钩子已成功注入当前项目！"
-echo -e "\\033[1;36m[TIP]\\033[0m Claude Code 运行时的敏感操作将自动送往 7788 控制平面进行审批。"
-`;
+const QUICK_ONE_LINER_SH = `npm run configure:claude-runtime`;
 
 const EMBEDDED_NODE_GATEWAY_TS = `/**
  * 免 Python 纯 TypeScript 内嵌网关 (server.ts)
@@ -110,8 +89,8 @@ export const LocalAgentModal: React.FC<LocalAgentModalProps> = ({ isOpen, langua
       filename: 'setup-claude-hooks.sh',
       code: QUICK_ONE_LINER_SH,
       desc: isZh
-        ? '1 行终端脚本自动为当前工作区生成 .claude/settings.json 生产级钩子，无需手动修改任何配置。'
-        : 'One-line shell script automatically injecting .claude/settings.json into current workspace.',
+        ? '运行仓库脚本，将观测 Hook 合并到现有配置并保留原设置。'
+        : 'Run the repository script to merge runtime hooks while preserving existing settings.',
     },
     nodegateway: {
       filename: 'server.ts',

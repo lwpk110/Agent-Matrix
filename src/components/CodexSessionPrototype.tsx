@@ -260,10 +260,12 @@ export function CodexSessionPrototype({
   logs = [],
   connectionState = "simulation",
   realStatus,
+  prototypeMode = false,
 }: {
   logs?: LogEntry[];
   connectionState?: WsConnectionState;
   realStatus?: RealSystemStatus | null;
+  prototypeMode?: boolean;
 }) {
   const reducedMotion = useReducedMotion();
   const [selected, setSelected] = useState<StepId | null>(() => {
@@ -553,7 +555,10 @@ export function CodexSessionPrototype({
           <span className="cp-brand-section">Codex Runtime</span>
         </a>
         <div className="cp-header-right">
-          <a className="cp-real-link cp-3d-link" href="/codex/3d">
+          <a className="cp-real-link" href={prototypeMode ? '/codex' : '/codex/prototype'}>
+            {prototypeMode ? '对比实时页面' : '查看模拟原型'} <ArrowRight size={12} />
+          </a>
+          <a className="cp-real-link cp-3d-link" href={prototypeMode ? '/codex/prototype/3d' : '/codex/3d'}>
             3D 拓扑 <Sparkles size={12} />
           </a>
           <span className={`cp-prototype ${liveMode ? "is-live" : ""}`}>

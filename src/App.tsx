@@ -66,6 +66,8 @@ export default function App() {
     useState<BlackBoxStage>();
   const seenCodexEventIds = useRef(new Set<string>());
   const [codexHistoryLoaded, setCodexHistoryLoaded] = useState(false);
+  const [claudeHistoryLoaded, setClaudeHistoryLoaded] = useState(false);
+  const [claudeHistoryError, setClaudeHistoryError] = useState(false);
 
   // Real System & Git status telemetry
   const [realStatus, setRealStatus] = useState<RealSystemStatus | null>(null);
@@ -579,6 +581,13 @@ export default function App() {
         setCodexHistoryLoaded(true);
       })
       .catch(() => setCodexHistoryLoaded(true));
+    telemetryBus.fetchClaudeRuntimeEvents()
+      .then(({ events }) => {
+        events.forEach((payload) => telemetryBus.dispatchLocalEvent({ type: "claude_runtime", payload }));
+        setClaudeHistoryLoaded(true);
+        setClaudeHistoryError(false);
+      })
+      .catch(() => { setClaudeHistoryLoaded(true); setClaudeHistoryError(true); });
 
     const unsubState = telemetryBus.onStateChange((newState) => {
       setWsState(newState);
@@ -686,11 +695,13 @@ export default function App() {
       } else if (event.type === "telemetry") {
         setObservedTopologyStage("feedback");
       } else if (event.type === "codex_runtime_cleared") {
-        setLogs((current) => current.filter((log) => !log.runtimeEvent));
-      } else if (event.type === "codex_runtime") {
+        setLogs((current) => current.filter((log) => log.runtimeEvent?.provider !== "codex"));
+      } else if (event.type === "claude_runtime_cleared") {
+        setLogs((current) => current.filter((log) => log.runtimeEvent?.provider !== "claude"));
+      } else if (event.type === "codex_runtime" || event.type === "claude_runtime") {
         const runtimeEvent = event.payload as {
-          provider: "codex";
-          source: "codex-hook" | "codex-app-server";
+          provider: "codex" | "claude";
+          source: "codex-hook" | "codex-app-server" | "claude-hook";
           eventId?: string;
           hookEventName: string;
           sessionId?: string;
@@ -789,7 +800,7 @@ export default function App() {
                 : toolName
                   ? `${hookEventName} · ${toolKind ? `${toolKind}/` : ""}${toolName}${inputSummary ? ` · ${inputSummary}` : ""}`
                   : `${hookEventName}${typeof payload.source === "string" ? ` · ${payload.source}` : ""}`;
-        const isPermissionEvent = hookEventName === "PermissionRequest";
+        const isPermissionEvent = hookEventName === "PermissionRequest" || hookEventName === "PermissionDenied";
         const isToolEvent =
           hookEventName === "PreToolUse" ||
           hookEventName === "PostToolUse" ||
@@ -804,7 +815,7 @@ export default function App() {
 
         addLog(
           {
-            agentTag: "CODEX LIVE",
+            agentTag: runtimeEvent.provider === "claude" ? "CLAUDE LIVE" : "CODEX LIVE",
             agentColor: isPermissionEvent
               ? "amber"
               : hookEventName === "UserPromptSubmit"
@@ -823,14 +834,16 @@ export default function App() {
                     name: toolName,
                     args: inputSummary,
                     status:
-                      hookEventName === "PostToolUse"
-                        ? "completed"
-                        : "executing",
+                      hookEventName === "PostToolUseFailure"
+                        ? "failed"
+                        : hookEventName === "PostToolUse"
+                          ? "completed"
+                          : "executing",
                     durationMs,
                   }
                 : undefined,
             runtimeEvent: {
-              provider: "codex",
+              provider: runtimeEvent.provider,
               source: runtimeEvent.source,
               eventId: runtimeEvent.eventId || "",
               eventName: hookEventName,
@@ -1665,7 +1678,29 @@ export default function App() {
           });
           if (!response.ok)
             throw new Error("Could not clear Codex runtime events");
-          setLogs((current) => current.filter((log) => !log.runtimeEvent));
+          setLogs((current) => current.filter((log) => log.runtimeEvent?.provider !== "codex"));
+        }}
+      />
+    );
+  }
+
+  if (window.location.pathname === "/claude/runtime") {
+    return (
+      <CodexRuntimePage
+        language={language}
+        connectionState={wsState}
+        hookGatewayState={realStatus?.claudeHookGatewayState || "starting"}
+        hookPort={realStatus?.claudeHookPort}
+        appServerState="offline"
+        historyLoaded={claudeHistoryLoaded}
+        historyError={claudeHistoryError}
+        logs={logs}
+        provider="claude"
+        onBack={() => { window.location.href = "/"; }}
+        onClear={async () => {
+          const response = await fetch("/api/real/claude-events", { method: "DELETE" });
+          if (!response.ok) throw new Error("Could not clear Claude runtime events");
+          setLogs((current) => current.filter((log) => log.runtimeEvent?.provider !== "claude"));
         }}
       />
     );
@@ -1775,6 +1810,13 @@ export default function App() {
               <span>
                 {language === "zh" ? "Codex 工作台" : "Codex Runtime"}
               </span>
+            </a>
+            <a
+              href="/claude/runtime"
+              className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 bg-amber-950/60 text-amber-200 border border-amber-800 hover:border-amber-400"
+            >
+              <span>◆</span>
+              <span>{language === "zh" ? "Claude 运行时" : "Claude Runtime"}</span>
             </a>
             <button
               onClick={() => {

@@ -24,6 +24,21 @@ test('captures readable prompt text and explicitly selected skills without local
   assert.doesNotMatch(JSON.stringify(events), /C:\/Users\/private/);
 });
 
+test('preserves user prompt text up to the Hook redaction limit while redacting secrets', () => {
+  const prompt = `${'x'.repeat(1500)} api_key=supersecret123 ${'y'.repeat(3000)}`;
+  const [event] = normalizeCodexAppServerItem(thread, turn, {
+    type: 'userMessage',
+    id: 'long-prompt',
+    content: [{ type: 'text', text: prompt }],
+  }, 1);
+
+  const captured = event.payload.prompt as string;
+  assert.equal(captured.length, 4000);
+  assert.ok(captured.startsWith('x'.repeat(1500)));
+  assert.ok(captured.includes('api_key=[REDACTED]'));
+  assert.equal(captured.includes('supersecret123'), false);
+});
+
 test('records hosted search metadata without retaining result bodies', () => {
   const [event] = normalizeCodexAppServerItem(thread, turn, {
     type: 'webSearch',

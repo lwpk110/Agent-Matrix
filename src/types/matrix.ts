@@ -14,7 +14,7 @@ export type AgentRole =
 export interface ToolCall {
   name: string;
   args: string;
-  status: 'pending' | 'executing' | 'completed' | 'blocked';
+  status: 'pending' | 'executing' | 'completed' | 'blocked' | 'failed';
   output?: string;
   durationMs?: number;
 }
@@ -42,8 +42,8 @@ export interface LogEntry {
   toolCall?: ToolCall;
   riskLevel?: 'nominal' | 'elevated' | 'critical';
   runtimeEvent?: {
-    provider: 'codex';
-    source: 'codex-hook' | 'codex-app-server';
+    provider: 'codex' | 'claude';
+    source: 'codex-hook' | 'codex-app-server' | 'claude-hook';
     eventId: string;
     eventName: string;
     toolName?: string;
@@ -143,8 +143,11 @@ export interface RealSystemStatus {
   activeClientsCount: number;
   totalRealEvents: number;
   totalCodexEvents?: number;
+  totalClaudeEvents?: number;
   codexHookPort?: number;
   codexHookGatewayState?: 'starting' | 'listening' | 'offline';
+  claudeHookPort?: number;
+  claudeHookGatewayState?: 'starting' | 'listening' | 'offline';
   codexAppServerState?: 'starting' | 'listening' | 'offline';
   hasClaudeHooks?: boolean;
   timestamp: string;

@@ -39,22 +39,10 @@ echo -e "\n\033[1;34m[1/3] 正在清理历史锁文件残留并安装主依赖 (
 rm -rf package-lock.json
 pnpm install
 
-# 3. 自动注入 Claude Code 生产级钩子配置
+# 3. 安全合并 Claude Code 运行时观测 Hook
 echo -e "\n\033[1;34m[2/3] 正在配置 Claude Code 安全审计钩子 (.claude/settings.json)...\033[0m"
-mkdir -p .claude
-cat << 'EOF' > .claude/settings.json
-{
-  "hooks": {
-    "PreToolUse": "curl -s -X POST http://localhost:7788/hook/pre -H 'Content-Type: application/json' -d @-",
-    "PostToolUse": "curl -s -X POST http://localhost:7788/hook/post -H 'Content-Type: application/json' -d @-"
-  },
-  "security": {
-    "gatekeeperEnabled": true,
-    "gatekeeperPort": 7788
-  }
-}
-EOF
-echo -e "\033[1;32m[✓]\033[0m .claude/settings.json 配置已成功就绪！"
+node --import tsx scripts/configure-claude-runtime.mjs
+echo -e "\033[1;32m[✓]\033[0m Claude Code runtime Hook 已安全合并到 .claude/settings.json！"
 
 # 4. 赋予脚本执行权限
 chmod +x codex-wrapper.sh 2>/dev/null || true

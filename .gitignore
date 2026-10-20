@@ -7,5 +7,6 @@ coverage/
 *.log
 .codex/runtime-events.jsonl
 .codex/runtime-appserver-state.json
+.claude/runtime-events.jsonl
 .env*
 !.env.example

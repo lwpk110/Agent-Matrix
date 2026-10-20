@@ -54,6 +54,40 @@ test('shows an explicit missing prompt step and preserves unrecognized Hook even
   assert.ok(chain[1].tags.includes('HOOK'));
 });
 
+test('shows failed Claude tool calls as failed and renders the observed final answer', () => {
+  const prompt = runtimeLog('claude-prompt', 'UserPromptSubmit', undefined, '2026-10-17T10:00:00.000Z');
+  prompt.runtimeEvent!.provider = 'claude';
+  prompt.runtimeEvent!.source = 'claude-hook';
+  prompt.runtimeEvent!.details = JSON.stringify({ prompt: '修复问题' });
+  const failed = runtimeLog('claude-failure', 'PostToolUseFailure', undefined, '2026-10-17T10:00:01.000Z');
+  failed.runtimeEvent!.provider = 'claude';
+  failed.runtimeEvent!.source = 'claude-hook';
+  failed.runtimeEvent!.toolUseId = 'call-failed';
+  failed.runtimeEvent!.toolName = 'Bash';
+  failed.runtimeEvent!.phase = 'completed';
+  failed.runtimeEvent!.details = JSON.stringify({ tool_input: { command: 'npm test' }, error: 'process failed' });
+  const answer = runtimeLog('claude-stop', 'Stop', undefined, '2026-10-17T10:00:02.000Z');
+  answer.runtimeEvent!.provider = 'claude';
+  answer.runtimeEvent!.source = 'claude-hook';
+  answer.runtimeEvent!.details = JSON.stringify({ last_assistant_message: '修复已完成' });
+
+  const chain = buildChain([prompt, failed, answer], true);
+  assert.equal(chain.find((step) => step.kind === 'tool')?.status, 'failed');
+  assert.equal(chain.find((step) => step.kind === 'result')?.summary, '修复已完成');
+});
+
+test('splits Claude session turns at each prompt when app-server turn IDs are unavailable', () => {
+  const firstPrompt = runtimeLog('claude-prompt-a', 'UserPromptSubmit', undefined, '2026-10-17T10:00:00.000Z');
+  const secondPrompt = runtimeLog('claude-prompt-b', 'UserPromptSubmit', undefined, '2026-10-17T10:01:00.000Z');
+  for (const event of [firstPrompt, secondPrompt]) {
+    event.runtimeEvent!.provider = 'claude';
+    event.runtimeEvent!.source = 'claude-hook';
+  }
+  const groups = groupSessions([firstPrompt, secondPrompt]);
+  assert.equal(groups.length, 2);
+  assert.notEqual(groups[0].id, groups[1].id);
+});
+
 test('keeps attachment metadata out of the readable task summary', () => {
   const log = runtimeLog('prompt', 'UserPromptSubmit', 'turn-a', '2026-10-17T10:00:00.000Z');
   log.runtimeEvent!.details = JSON.stringify({

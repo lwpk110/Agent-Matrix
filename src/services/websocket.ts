@@ -8,7 +8,7 @@
 import { WsConnectionState, HitlApprovalRequest, ToolCall, RealSystemStatus } from '../types/matrix';
 
 export type WsEventHandler = (event: {
-  type: 'tool_call' | 'hitl_blocked' | 'telemetry' | 'agent_state' | 'pong' | 'system_status' | 'exec_result' | 'claude_hooks_configured' | 'codex_runtime' | 'codex_runtime_cleared';
+  type: 'tool_call' | 'hitl_blocked' | 'telemetry' | 'agent_state' | 'pong' | 'system_status' | 'exec_result' | 'claude_hooks_configured' | 'codex_runtime' | 'codex_runtime_cleared' | 'claude_runtime' | 'claude_runtime_cleared';
   payload: unknown;
 }) => void;
 
@@ -22,7 +22,7 @@ class WebSocketTelemetryBus {
   private reconnectTimer: number | null = null;
   private heartbeatTimer: number | null = null;
   private handlers: Set<WsEventHandler> = new Set();
-  private bufferedCodexEvents: Array<{ type: 'codex_runtime'; payload: unknown }> = [];
+  private bufferedCodexEvents: Array<{ type: 'codex_runtime' | 'claude_runtime'; payload: unknown }> = [];
   private stateListeners: Set<(state: WsConnectionState) => void> = new Set();
   private forceSimulation: boolean = false;
   private retryAttempt: number = 0;
@@ -127,7 +127,7 @@ class WebSocketTelemetryBus {
       this.ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'codex_runtime' && this.handlers.size === 0) {
+          if ((data.type === 'codex_runtime' || data.type === 'claude_runtime') && this.handlers.size === 0) {
             this.bufferedCodexEvents.push(data);
             if (this.bufferedCodexEvents.length > 500) this.bufferedCodexEvents.shift();
             return;
@@ -215,6 +215,12 @@ class WebSocketTelemetryBus {
   public async fetchCodexRuntimeEvents(): Promise<CodexRuntimeSnapshot> {
     const response = await fetch('/api/real/codex-events', { cache: 'no-store' });
     if (!response.ok) throw new Error(`Codex event history unavailable: HTTP ${response.status}`);
+    return await response.json();
+  }
+
+  public async fetchClaudeRuntimeEvents(): Promise<CodexRuntimeSnapshot> {
+    const response = await fetch('/api/real/claude-events', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Claude event history unavailable: HTTP ${response.status}`);
     return await response.json();
   }
 
