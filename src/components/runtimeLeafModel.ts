@@ -1,4 +1,4 @@
-import type { MockNodeId, MockRuntimeEvent, MockRuntimeSession } from "./codexRuntimeMock";
+import type { RuntimeEvent, RuntimeNodeId, RuntimeSession } from "../types/runtime";
 
 export type LeafStatus = "available" | "loaded" | "completed" | "running" | "waiting" | "failed";
 export type RuntimeLeaf = {
@@ -13,8 +13,8 @@ export type RuntimeLeaf = {
   count?: number;
 };
 
-function callGroups(calls: MockRuntimeSession["calls"][number][]) {
-  const groups = new Map<string, MockRuntimeSession["calls"]>();
+function callGroups(calls: RuntimeSession["calls"][number][]) {
+  const groups = new Map<string, RuntimeSession["calls"]>();
   for (const call of calls) {
     const key = call.name.trim().toLocaleLowerCase() || call.title.trim().toLocaleLowerCase();
     groups.set(key, [...(groups.get(key) ?? []), call]);
@@ -27,25 +27,32 @@ export const leafStatusLabels: Record<LeafStatus, string> = {
   running: "执行中", waiting: "尚未发生", failed: "执行失败",
 };
 
+/** MCP 搜索仍属于 MCP，优先按工具名称归属，避免统计调用重复计入节点。 */
+export function runtimeCallNode(call: RuntimeSession["calls"][number]): RuntimeNodeId {
+  if (/^mcp__/i.test(call.name)) return "mcp";
+  if (/search/i.test(call.name)) return "search";
+  return call.type === "mcp" ? "mcp" : "tool";
+}
+
 /** Expand a category into its own members, using only events visible at this replay position. */
-export function runtimeLeaves(node: MockNodeId, session: MockRuntimeSession, events: MockRuntimeEvent[]): RuntimeLeaf[] {
+export function runtimeLeaves(node: RuntimeNodeId, session: RuntimeSession, events: RuntimeEvent[]): RuntimeLeaf[] {
   if (session.isReal) {
-    const statusOf = (status: MockRuntimeEvent["status"]): LeafStatus => status === "allowed" ? "completed"
+    const statusOf = (status: RuntimeEvent["status"]): LeafStatus => status === "allowed" ? "completed"
       : status === "unknown" ? "waiting" : status;
     if (["tool", "mcp", "search"].includes(node)) {
       const visibleIds = new Set(events.filter(event => event.node === node && event.callId).map(event => event.callId!));
-      const observedCalls = session.calls.filter(call => visibleIds.has(call.id));
+      const observedCalls = session.calls.filter(call => visibleIds.has(call.id) || (call.metadataOnly && runtimeCallNode(call) === node));
       return callGroups(observedCalls).map(group => {
         const latestCall = group.at(-1)!;
         const ids = new Set(group.map(call => call.id));
         const observed = events.filter(event => event.node === node && event.callId && ids.has(event.callId));
-        const lastEvent = observed.at(-1)!;
+        const lastEvent = observed.at(-1);
         return {
-          id: latestCall.name, title: latestCall.title || lastEvent.title, name: latestCall.name,
-          summary: `${latestCall.name} 共调用 ${group.length} 次。${latestCall.resultReceived ? `${lastEvent.summary} 已采集到返回字段。` : lastEvent.summary}`,
-          status: statusOf(latestCall.status || lastEvent.status), count: group.length,
+          id: latestCall.name, title: latestCall.title || lastEvent?.title || latestCall.name, name: latestCall.name,
+          summary: `${latestCall.name} 共调用 ${group.length} 次。${latestCall.metadataOnly ? latestCall.resultReceived ? "已观测结果标记；仅统计元数据。" : "结果未观测；仅统计元数据。" : latestCall.resultReceived ? `${lastEvent?.summary ?? ""} 已采集到返回字段。` : lastEvent?.summary ?? "结果未观测"}`,
+          status: statusOf(latestCall.status || lastEvent?.status || "unknown"), count: group.length,
           icon: node === "tool" ? "terminal" : node === "search" ? "search" : "network",
-          eventId: lastEvent.id, callId: latestCall.id,
+          eventId: lastEvent?.id, callId: latestCall.id,
         };
       });
     }
@@ -65,18 +72,18 @@ export function runtimeLeaves(node: MockNodeId, session: MockRuntimeSession, eve
     const event = last(eventName);
     return { id, title, name, summary, icon, eventId: event?.id, status: event ? "completed" : "waiting" };
   };
-  const callLeaf = (call: MockRuntimeSession["calls"][number]): RuntimeLeaf => {
+  const callLeaf = (call: RuntimeSession["calls"][number]): RuntimeLeaf => {
     const observed = events.filter(event => event.callId === call.id);
     const terminal = observed.find(event => event.name === "tool.completed" || event.name === "tool.failed");
     return {
       id: call.id, title: call.title, name: call.name, icon: call.type === "mcp" ? "network" : "terminal",
       summary: terminal ? `${call.title}${call.durationMs === null ? "" : `，耗时 ${call.durationMs} ms`}。${call.status === "failed" ? "本次调用失败。" : call.resultReceived === false ? "完成事件未包含返回值。" : "已收到调用完成事件。"}` : `${call.title}。${call.status === "running" ? "工具正在执行。" : "回放尚未执行到这次调用。"}`,
-      status: terminal ? call.status === "unknown" ? "waiting" : call.status : call.status === "running" || observed.some(event => event.name === "tool.started") ? "running" : "waiting",
+      status: terminal ? call.status === "allowed" || call.status === "unknown" ? "waiting" : call.status : call.status === "running" || observed.some(event => event.name === "tool.started") ? "running" : "waiting",
       callId: observed.length ? call.id : undefined,
       eventId: terminal?.id ?? observed.at(-1)?.id,
     };
   };
-  const groupedCallLeaf = (group: MockRuntimeSession["calls"][number][]): RuntimeLeaf => {
+  const groupedCallLeaf = (group: RuntimeSession["calls"][number][]): RuntimeLeaf => {
     const observedIds = new Set(events.filter(event => event.callId).map(event => event.callId));
     const visible = group.filter(call => observedIds.has(call.id));
     const active = [...visible].reverse().find(call => callLeaf(call).status === "running");

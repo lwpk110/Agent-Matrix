@@ -1,10 +1,10 @@
 import { Activity, ArrowUpRight, Pause, Radio } from "lucide-react";
-import type { MockRuntimeEvent } from "./codexRuntimeMock";
+import type { RuntimeEvent } from "../types/runtime";
 import { statusLabels } from "./CodexMockDetails";
 
 export function RuntimeTelemetry({ events, activeEvent, replaying, playing, isReal = false, onEvent }: {
-  events: MockRuntimeEvent[]; activeEvent?: MockRuntimeEvent; replaying: boolean; playing: boolean; isReal?: boolean;
-  onEvent: (event: MockRuntimeEvent, source: HTMLButtonElement) => void;
+  events: RuntimeEvent[]; activeEvent?: RuntimeEvent; replaying: boolean; playing: boolean; isReal?: boolean;
+  onEvent: (event: RuntimeEvent, source: HTMLButtonElement) => void;
 }) {
   const last = activeEvent ?? events.at(-1);
   const buckets = Array.from({ length: 24 }, () => 0);

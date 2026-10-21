@@ -42,8 +42,9 @@ export interface LogEntry {
   toolCall?: ToolCall;
   riskLevel?: 'nominal' | 'elevated' | 'critical';
   runtimeEvent?: {
-    provider: 'codex' | 'claude';
-    source: 'codex-hook' | 'codex-app-server' | 'claude-hook';
+    /** 内置和受信任静态插件均可声明自己的 provider。 */
+    provider: string;
+    source: string;
     eventId: string;
     eventName: string;
     toolName?: string;
@@ -52,6 +53,7 @@ export interface LogEntry {
     toolUseId?: string;
     cwd?: string;
     model?: string;
+    reasoningEffort?: string;
     permissionMode?: string;
     agentId?: string;
     agentType?: string;

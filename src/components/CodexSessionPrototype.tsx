@@ -31,12 +31,17 @@ import { RuntimeParticles } from "./RuntimeParticles";
 import { RuntimeTelemetry } from "./RuntimeTelemetry";
 import { RuntimeLeafTopology, type LeafPreviewAnchor } from "./RuntimeLeafTopology";
 import { RuntimeResources } from "./RuntimeResources";
+import { ClaudeMark } from "./ClaudeMark";
+import { CodexMark } from "./CodexMark";
 import { runtimeFlow } from "./runtimeFlow";
+import { advanceRuntimeVisualPlayback, createRuntimeVisualPlayback, currentRuntimeVisualCue } from "./runtimeVisualPlayback";
 import type { RuntimeLeaf } from "./runtimeLeafModel";
 import type { LogEntry, RealSystemStatus, WsConnectionState } from "../types/matrix";
-import { createCodexRuntimeSessionFromLogs, latestObservedCodexEvent } from "./codexRuntimeAdapter";
+import { createRuntimeSessionFromLogs, getRuntimeConnection, getRuntimePlugin, listRuntimePlugins } from "../services/runtimePlugins";
+import type { RuntimeEvent } from "../types/runtime";
+import { createEmptyRuntimeSession, useRuntimeTelemetry } from "../services/runtimeObservation";
+import { RuntimeEmptyState } from "./RuntimeEmptyState";
 import { codexCoreStatus } from "./codexCoreStatus";
-import type { CodexRolloutTelemetry } from "../types/codexTelemetry";
 import "./RuntimeObservatory.css";
 import {
   createCodexRuntimeMock,
@@ -261,11 +266,17 @@ export function CodexSessionPrototype({
   connectionState = "simulation",
   realStatus,
   prototypeMode = false,
+  provider = "codex",
+  historyLoaded = true,
+  historyError = false,
 }: {
   logs?: LogEntry[];
   connectionState?: WsConnectionState;
   realStatus?: RealSystemStatus | null;
   prototypeMode?: boolean;
+  provider?: string;
+  historyLoaded?: boolean;
+  historyError?: boolean;
 }) {
   const reducedMotion = useReducedMotion();
   const [selected, setSelected] = useState<StepId | null>(() => {
@@ -279,49 +290,48 @@ export function CodexSessionPrototype({
   const [progress, setProgress] = useState(Infinity);
   const [draft, setDraft] = useState(MOCK_USER_PROMPT);
   const [submitted, setSubmitted] = useState(MOCK_USER_PROMPT);
-  const observedLiveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs), [logs]);
-  const [rolloutTelemetry, setRolloutTelemetry] = useState<CodexRolloutTelemetry | null>(null);
-  useEffect(() => {
-    if (!observedLiveSession) {
-      setRolloutTelemetry(null);
-      return;
-    }
-    const sessionId = observedLiveSession.id;
-    const turnId = observedLiveSession.turnId;
-    let active = true;
-    let pending = false;
-    const refresh = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const query = new URLSearchParams({ sessionId, turnId });
-        const response = await fetch(`/api/real/codex-rollout?${query}`, { cache: "no-store" });
-        if (!response.ok) throw new Error("Rollout telemetry unavailable");
-        const result = await response.json() as { telemetry: CodexRolloutTelemetry | null };
-        if (active) setRolloutTelemetry(result.telemetry);
-      } catch {
-        if (active) setRolloutTelemetry(null);
-      } finally {
-        pending = false;
-      }
-    };
-    setRolloutTelemetry(null);
-    void refresh();
-    const timer = window.setInterval(refresh, 4000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [observedLiveSession?.id, observedLiveSession?.turnId]);
-  const liveTelemetry = rolloutTelemetry?.sessionId === observedLiveSession?.id && rolloutTelemetry?.turnId === observedLiveSession?.turnId
-    ? rolloutTelemetry
-    : null;
-  const liveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs, liveTelemetry), [logs, liveTelemetry]);
-  const demoSession = useMemo(() => createCodexRuntimeMock(submitted), [submitted]);
-  const session = liveSession || demoSession;
+  const plugin = getRuntimePlugin(provider);
+  const runtimeConnection = getRuntimeConnection(plugin, realStatus);
+  const runtimeOffline = runtimeConnection.hookGatewayState === "offline" || runtimeConnection.appServerState === "offline";
+  const providerName = plugin.label;
+  const observedLiveSession = useMemo(() => prototypeMode ? null : createRuntimeSessionFromLogs(plugin, logs), [logs, plugin, prototypeMode]);
+  const liveTelemetry = useRuntimeTelemetry(plugin, observedLiveSession);
+  const liveSession = useMemo(() => prototypeMode ? null : createRuntimeSessionFromLogs(plugin, logs, liveTelemetry), [logs, liveTelemetry, plugin, prototypeMode]);
+  const demoSession = useMemo(() => prototypeMode ? createCodexRuntimeMock(submitted) : null, [prototypeMode, submitted]);
+  const emptyState = historyError ? "error" : connectionState === "offline" || runtimeOffline ? "offline" : "waiting";
+  const session = liveSession || demoSession || createEmptyRuntimeSession(plugin.provider, emptyState);
   const liveMode = Boolean(liveSession);
-  const modelRequestCount = liveSession?.rolloutTelemetry?.modelRequestCount ?? session.rounds.length;
-  const latestObservedEvent = useMemo(() => liveSession ? latestObservedCodexEvent(liveSession, logs) : undefined, [liveSession, logs]);
+  const emptyMode = !liveMode && !prototypeMode;
+  const modelRequestCount = prototypeMode ? session.rounds.length : plugin.provider === "claude"
+    ? liveSession?.rolloutTelemetry?.modelRequestCount ?? null
+    : liveSession?.capabilities?.rolloutTelemetry
+      ? liveSession.rolloutTelemetry?.modelRequestCount ?? (session.rounds.length || null)
+      : session.rounds.length || null;
+  const modelSource = liveSession?.rolloutTelemetry?.model
+    ? "模型来自实际请求统计"
+    : session.model !== "未采集" ? "模型来自运行时事件" : "模型来源未采集";
+  const inputUsage = liveSession?.rolloutTelemetry?.turnUsage;
+  const hasInputBreakdown = [inputUsage?.nativeInputTokens, inputUsage?.cacheCreationInputTokens, inputUsage?.cacheReadInputTokens]
+    .some((value) => value !== null && value !== undefined);
+  const contextMetadata = liveSession?.rolloutTelemetry?.contextMetadata;
+  const promptMetadata = liveSession?.rolloutTelemetry?.promptMetadata;
+  const metadataKey = [
+    contextMetadata && contextMetadata.instructionFileCount !== null && `context:${contextMetadata.instructionFileCount}:${contextMetadata.scope}:${contextMetadata.observedAt ?? ""}`,
+    promptMetadata && (promptMetadata.systemSegmentCount !== null || promptMetadata.toolDefinitionCount !== null) && `prompt:${promptMetadata.systemSegmentCount ?? ""}:${promptMetadata.toolDefinitionCount ?? ""}:${promptMetadata.scope}:${promptMetadata.observedAt ?? ""}`,
+  ].filter(Boolean).join("|") || undefined;
+  const eventSignature = session.events.map(event => `${event.id}:${event.status}`).join("|");
+  const visualPlayback = useRef(createRuntimeVisualPlayback({ provider: plugin.provider, sessionId: session.id, turnId: session.turnId, events: session.events, metadataKey, modelRequestCount, isLiveSession: liveMode }));
+  const [visualClock, setVisualClock] = useState(() => Date.now());
+  useEffect(() => {
+    const identity = `${plugin.provider}:${session.id}:${session.turnId}`;
+    const observation = { provider: plugin.provider, sessionId: session.id, turnId: session.turnId, events: session.events, metadataKey, modelRequestCount, isLiveSession: liveMode, liveNewTurn: liveMode && visualPlayback.current.isLiveSession && visualPlayback.current.identity !== identity };
+    visualPlayback.current = advanceRuntimeVisualPlayback(visualPlayback.current, observation, visualClock);
+  }, [plugin.provider, session.id, session.turnId, eventSignature, metadataKey, modelRequestCount, liveMode]);
+  useEffect(() => {
+    if (!liveMode || !playing) return;
+    const timer = window.setInterval(() => setVisualClock(value => value + 120), 120);
+    return () => window.clearInterval(timer);
+  }, [liveMode, playing]);
   const [statusClock, setStatusClock] = useState(() => Date.now());
   useEffect(() => {
     if (!liveMode) return;
@@ -335,8 +345,10 @@ export function CodexSessionPrototype({
     connectionState,
     realStatus,
     telemetry: liveSession?.rolloutTelemetry,
+    provider: plugin.provider,
+    plugin,
     now: statusClock,
-  }), [logs, session.id, session.turnId, connectionState, realStatus, liveSession?.rolloutTelemetry, statusClock]);
+  }), [logs, session.id, session.turnId, connectionState, realStatus, liveSession?.rolloutTelemetry, plugin, statusClock]);
   const observedLocalCalls = session.calls.filter(call => call.type === "local").length;
   const observedMcpCalls = session.calls.filter(call => call.type === "mcp").length;
   const observedPermissions = session.events.filter(event => event.node === "gate").length;
@@ -363,19 +375,22 @@ export function CodexSessionPrototype({
   const mapRef = useRef<HTMLElement | null>(null);
   const activeStep = nodes.find((step) => step.id === selected);
   const currentEvent = replaying ? session.events[progress - 1] : undefined;
-  const flowEvent = replaying ? currentEvent : liveMode ? latestObservedEvent : undefined;
-  const arrivalFlow = runtimeFlow(flowEvent);
-  const activeFlowNode = arrivalFlow?.from ?? flowEvent?.node;
-  const arrivalNode = flowEvent
-    ? arrivalFlow?.to ?? (["running", "waiting", "failed"].includes(flowEvent.status) ? flowEvent.node : undefined)
+  const liveVisualCue = !replaying && liveMode ? currentRuntimeVisualCue(visualPlayback.current, visualClock) : undefined;
+  const visualEvidence = liveVisualCue?.cue.source === "derived"
+    ? liveVisualCue.cue.evidence === "metadata" ? "统计派生 · 快照已观测" : "统计派生 · 请求数更新"
     : undefined;
-  const currentStage = !currentEvent ? undefined : currentEvent.node === "input" ? "input"
-    : ["context", "prompt", "skill"].includes(currentEvent.node) ? "context"
-    : currentEvent.node === "output" ? "output" : "model";
+  const flowEvent = replaying ? currentEvent : liveVisualCue?.cue.event;
+  const arrivalFlow = replaying ? runtimeFlow(currentEvent) : liveVisualCue?.cue.flow;
+  const activeFlowNode = arrivalFlow?.from ?? flowEvent?.node;
+  const arrivalNode = arrivalFlow?.to ?? (flowEvent && ["running", "waiting", "failed"].includes(flowEvent.status) ? flowEvent.node : undefined);
+  const stageNode = currentEvent?.node ?? arrivalFlow?.to ?? activeFlowNode;
+  const currentStage = !stageNode ? undefined : stageNode === "input" ? "input"
+    : ["context", "prompt", "skill"].includes(stageNode) ? "context"
+    : stageNode === "output" ? "output" : "model";
   const replayGap = (session.events[progress]?.offsetMs ?? 0) - (currentEvent?.offsetMs ?? 0);
   const eventDuration = replaying
     ? Math.min(1500, Math.max(420, replayGap))
-    : liveMode ? 1500 : 900;
+    : liveVisualCue?.cue.durationMs ?? 900;
   const visibleEvents = session.events.slice(0, progress);
   const filteredEvents = visibleEvents.filter(
     (event) =>
@@ -426,7 +441,7 @@ export function CodexSessionPrototype({
   useEffect(() => {
     drawer.current?.querySelector(".cp-detail-content")?.scrollTo({ top: 0 });
   }, [selected, detailTab]);
-  const detailOpen = Boolean(selected);
+  const detailOpen = !emptyMode && Boolean(selected);
   useEffect(() => {
     if (!detailOpen) return;
     const previousOverflow = document.body.style.overflow;
@@ -452,6 +467,7 @@ export function CodexSessionPrototype({
   const state = (index: number) =>
     currentEvent?.node === nodes[index]?.id ? "running" : "done";
   const startReplay = () => {
+    if (emptyMode) return;
     if (!draft.trim()) return;
     setSubmitted(draft.trim());
     setProgress(0);
@@ -476,7 +492,7 @@ export function CodexSessionPrototype({
     setDetailTab("events");
     drawer.current?.querySelector(".cp-detail-content")?.scrollTo({ top: 0 });
   };
-  const openEvent = (event: MockRuntimeEvent, source: HTMLButtonElement) => {
+  const openEvent = (event: RuntimeEvent, source: HTMLButtonElement) => {
     select(event.node, source);
     setFocusedEvent(event.id);
     setDetailTab("events");
@@ -541,9 +557,12 @@ export function CodexSessionPrototype({
     };
   }, []);
 
+  if (emptyMode) return <RuntimeEmptyState plugin={plugin} connectionState={connectionState} connection={runtimeConnection} historyLoaded={historyLoaded} historyError={historyError} view="2d" />;
+
   return (
     <div
       className={`cp-app cp-runtime-prototype ${playing ? "rt-motion-on" : "rt-motion-off"}`}
+      data-runtime-provider={plugin.provider}
     >
       <header className="cp-header" inert={Boolean(selected)}>
         <a href="/" className="cp-brand">
@@ -552,20 +571,24 @@ export function CodexSessionPrototype({
           </span>
           <strong>Agent Matrix</strong>
           <span className="cp-brand-divider" />
-          <span className="cp-brand-section">Codex Runtime</span>
+          <span className="cp-brand-section">{providerName} Runtime</span>
         </a>
         <div className="cp-header-right">
-          <a className="cp-real-link" href={prototypeMode ? '/codex' : '/codex/prototype'}>
+          {!prototypeMode && listRuntimePlugins().filter(item => item.provider !== plugin.provider).map(item => (
+            <a key={item.provider} className="cp-real-link" href={item.paths.twoDimensional}>{item.label}</a>
+          ))}
+          {plugin.provider === 'claude' && <a className="cp-real-link" href="/claude/desktop">Desktop 统计</a>}
+          <a className="cp-real-link" href={prototypeMode ? plugin.paths.twoDimensional : '/codex/prototype'}>
             {prototypeMode ? '对比实时页面' : '查看模拟原型'} <ArrowRight size={12} />
           </a>
-          <a className="cp-real-link cp-3d-link" href={prototypeMode ? '/codex/prototype/3d' : '/codex/3d'}>
+          <a className="cp-real-link cp-3d-link" href={prototypeMode ? '/codex/prototype/3d' : plugin.paths.threeDimensional}>
             3D 拓扑 <Sparkles size={12} />
           </a>
           <span className={`cp-prototype ${liveMode ? "is-live" : ""}`}>
             <span />
             {liveMode ? "RUNTIME TRACE · LIVE" : "RUNTIME TRACE · PROTOTYPE"}
           </span>
-          <a className="cp-real-link" href="/codex/runtime">
+          <a className="cp-real-link" href={plugin.paths.runtime}>
             打开真实监测 <ArrowRight size={12} />
           </a>
         </div>
@@ -574,10 +597,10 @@ export function CodexSessionPrototype({
         <aside className="cp-sidebar">
           <div className="cp-workspace">
             <span className="cp-project-icon">
-              <Activity size={17} />
+              {plugin.visual?.coreIcon === "claude-mark" ? <ClaudeMark className="rt-provider-mark rt-claude-mark" style={{ color: plugin.visual.accent }} /> : plugin.visual?.coreIcon === "codex-mark" ? <CodexMark className="rt-provider-mark rt-codex-mark" style={{ color: plugin.visual.accent }} /> : plugin.visual?.coreIcon === "sparkles" ? <Sparkles size={17} style={{ color: plugin.visual.accent }} /> : <Activity size={17} />}
             </span>
             <div>
-              <strong>Codex Runtime</strong>
+              <strong>{providerName} Runtime</strong>
               <span>session / turn / events</span>
             </div>
           </div>
@@ -586,7 +609,7 @@ export function CodexSessionPrototype({
           </div>
           <div className="rt-session-card">
             <span className="rt-session-dot" /> {liveMode ? "LIVE SESSION" : "DEMO SESSION"}
-            <strong>{liveMode ? "真实 Codex 事件流" : "一个输入，完整运行轨迹"}</strong>
+            <strong>{liveMode ? `真实 ${providerName} 事件流` : "一个输入，完整运行轨迹"}</strong>
             <span>{liveMode ? `${session.events.length} 条已采集事件 · ${session.calls.length} 次调用` : "5 轮模型 · 1 次审批 · 1 次重试"}</span>
             <div>
               <span>
@@ -629,7 +652,7 @@ export function CodexSessionPrototype({
             <p>
               先看运行时全景，再点开任意事件。
               <br />
-              {liveMode ? "内容来自本机 Codex Hook / app-server。" : "所有内容均为原型示例。"}
+              {liveMode ? `内容来自本机 ${providerName} 运行时事件。` : "所有内容均为原型示例。"}
             </p>
             <div className="cp-sidebar-key">
               <LockKeyhole size={12} />
@@ -640,7 +663,7 @@ export function CodexSessionPrototype({
         <main className="cp-main">
           <div className="cp-breadcrumb">
             <ListTree size={13} />
-            Codex <ChevronRight size={12} />
+            {providerName} <ChevronRight size={12} />
             <span>Runtime trace</span>
             <span className="cp-mono">/ {session.id}{realStatus?.cwd ? ` · ${realStatus.cwd}` : ""}</span>
           </div>
@@ -656,7 +679,7 @@ export function CodexSessionPrototype({
               <p>沿着一次输入，看清上下文、模型决策、工具执行与结果回流。</p>
             </div>
             <div className="rt-controls">
-              <button className="rt-replay" onClick={startReplay}>
+              <button className="rt-replay" onClick={startReplay} disabled={emptyMode}>
                 <Play size={13} />
                 回放链路
               </button>
@@ -697,6 +720,7 @@ export function CodexSessionPrototype({
               工具循环 <i />
               事件观测
             </span>
+            {visualEvidence && <span className="cp-runtime-pill">{visualEvidence}</span>}
           </div>
           <nav className="rt-journey" aria-label="会话执行主线">
             {([
@@ -716,7 +740,7 @@ export function CodexSessionPrototype({
           <section
             className="rt-map"
             ref={mapRef}
-            aria-label="Codex runtime 完整链路"
+            aria-label={`${providerName} runtime 完整链路`}
             onMouseOver={(event) => updateHoveredNode(event.target as Element)}
             onFocusCapture={(event) => updateHoveredNode(event.target as Element)}
             onMouseLeave={leavePreview}
@@ -739,6 +763,9 @@ export function CodexSessionPrototype({
               host={mapRef}
               playing={playing}
               activeEvent={flowEvent}
+              activeFlow={arrivalFlow}
+              visualKey={liveVisualCue?.cue.id}
+              flowActive={replaying || Boolean(liveVisualCue?.active)}
               eventDuration={eventDuration}
               replaying={replaying}
               liveMode={liveMode}
@@ -799,7 +826,7 @@ export function CodexSessionPrototype({
                 <div className="rt-composer-footer">
                   <span>
                     <LockKeyhole size={10} />
-                    {liveMode ? "Codex 输入事件 · 只读展示" : "固定 mock 剧本 · 不执行真实任务"}
+                    {emptyMode ? historyError ? "历史加载失败" : !historyLoaded ? "正在恢复运行时历史" : "等待首条运行时事件" : liveMode ? `${providerName} 输入事件 · 只读展示` : "固定 mock 剧本 · 不执行真实任务"}
                   </span>
                   {!liveMode && <button disabled={!draft.trim()} type="submit">
                     发送演示 <Send size={12} />
@@ -819,7 +846,7 @@ export function CodexSessionPrototype({
                   {liveMode ? <>
                     <span>{session.events.filter(event => event.node === "context").length} 条上下文事件</span>
                     <span>{session.cwd === "未采集" ? "工作区未采集" : "工作区已采集"}</span>
-                    <span>规则文件未采集</span>
+                    <span>{contextMetadata?.instructionFileCount === null || contextMetadata?.instructionFileCount === undefined ? "规则快照文件未采集" : `${contextMetadata.instructionFileCount} 条规则快照文件`}</span>
                   </> : <><span>会话历史</span><span>工作区</span><span>项目规则</span></>}
                 </span>
               </GraphNode>
@@ -833,7 +860,7 @@ export function CodexSessionPrototype({
                 stateClass={graphState("prompt")}
               >
                 <span className="rt-mini-tags">
-                  {liveMode ? <><span>用户消息已采集</span><span>完整提示词未采集</span></> : <><span>用户消息</span><span>指令与工具定义</span></>}
+                  {liveMode ? <><span>用户消息已采集</span><span>{promptMetadata?.systemSegmentCount === null || promptMetadata?.systemSegmentCount === undefined ? "提示词快照未采集" : `系统 ${promptMetadata.systemSegmentCount} 段 · 工具 ${promptMetadata.toolDefinitionCount ?? "未采集"} 条`}</span></> : <><span>用户消息</span><span>指令与工具定义</span></>}
                 </span>
               </GraphNode>
             </div>
@@ -915,6 +942,7 @@ export function CodexSessionPrototype({
               <div className="rt-model-lane">
                 <button
                   className={`rt-model ${graphState("model")}`}
+                  style={{ '--rt-provider-accent': plugin.visual?.accent || '#b6b3ff' } as React.CSSProperties}
                   data-core-state={coreStatus.state}
                   data-runtime-node="model"
                   aria-label={`查看模型调用循环，${coreStatus.label}。${coreStatus.detail}`}
@@ -933,15 +961,16 @@ export function CodexSessionPrototype({
                   <span className="rt-core-coordinate rt-coordinate-top">MODEL / 01</span>
                   <span className="rt-core-coordinate rt-coordinate-bottom">CONTEXT → RESPONSE</span>
                   <span className="rt-model-center">
-                    <Activity size={32} />
-                    <strong>CODEX</strong>
-                    <small>{coreStatus.label}</small>
+                    {plugin.visual?.coreIcon === "claude-mark" ? <ClaudeMark className="rt-provider-mark rt-claude-mark" style={{ color: 'var(--rt-provider-accent)' }} /> : plugin.visual?.coreIcon === "codex-mark" ? <CodexMark className="rt-provider-mark rt-codex-mark" style={{ color: 'var(--rt-provider-accent)' }} /> : plugin.visual?.coreIcon === "sparkles" ? <Sparkles size={32} style={{ color: 'var(--rt-provider-accent)' }} /> : <Activity size={32} style={{ color: 'var(--rt-provider-accent)' }} />}
+                    <strong className="rt-model-label">{providerName.toUpperCase()}</strong>
+                    <small className="rt-model-state">{coreStatus.label}</small>
                   </span>
                   <span className={`rt-model-caption is-${coreStatus.state}`} role="status" aria-live="polite">
                     <span className="rt-core-status-dot" />{coreStatus.state === "normal"
-                      ? liveMode ? `${modelRequestCount} 次模型请求 · ${session.calls.length} 次调用` : "5 轮请求 · 6 次工具调用"
+                      ? liveMode ? `${modelRequestCount ?? "未采集"} 次模型请求 · ${session.calls.length} 次调用` : "5 轮请求 · 6 次工具调用"
                       : coreStatus.label}
                   </span>
+                  {liveMode && <span className="rt-model-provenance">{modelSource}</span>}
                 </button>
                 <div className="rt-model-decision">
                   <span>
@@ -1075,8 +1104,8 @@ export function CodexSessionPrototype({
             <div>
               <span>MODEL ROUNDS</span>
               <strong>
-                {modelRequestCount}
-                <small>{liveMode ? "已关联模型请求" : "轮模型请求"}</small>
+                {modelRequestCount ?? "未采集"}
+                <small>{liveMode ? modelSource : "轮模型请求"}</small>
               </strong>
             </div>
             <div>
@@ -1096,13 +1125,19 @@ export function CodexSessionPrototype({
               <span>TRACE EVENTS</span>
               <strong>
                 {session.events.length}
-                <small>{liveMode ? "Codex Hook / app-server 事件" : "完整模拟场景事件"}</small>
+                <small>{liveMode ? `${providerName} 运行时事件` : "完整模拟场景事件"}</small>
               </strong>
             </div>
+            {liveMode && plugin.provider === "claude" && <div className="mx-session-usage-note">
+              <span>INPUT TOKEN SCOPE</span>
+              <small>{hasInputBreakdown
+                ? `输入合计包含原生输入、创建缓存和读取缓存：${inputUsage?.nativeInputTokens?.toLocaleString() ?? "未采集"} + ${inputUsage?.cacheCreationInputTokens?.toLocaleString() ?? "未采集"} + ${inputUsage?.cacheReadInputTokens?.toLocaleString() ?? "未采集"}`
+                : "输入合计包含原生输入、创建缓存和读取缓存；当前分解未采集"}</small>
+            </div>}
           </section>
           <section
             className="cp-activity mx-trace"
-            aria-label={liveMode ? "Codex 实时事件轨迹" : "完整模拟事件轨迹"}
+            aria-label={liveMode ? `${providerName} 实时事件轨迹` : "完整模拟事件轨迹"}
           >
             <div className="cp-activity-heading">
               <span>
@@ -1207,12 +1242,12 @@ export function CodexSessionPrototype({
               </button>
             )}
             <p className="mx-trace-caption">
-              {liveMode ? "LIVE · 事件来自本机 Codex Hook / app-server。未采集字段不会用演示数据补齐。" : "模拟数据 · 点击节点先看具体内容，再追踪事件与原始字段。输入框仅替换用户消息；模型、工具和审批结果均使用演示脚本。"}
+              {liveMode ? `LIVE · 事件来自本机 ${providerName} 运行时。未采集字段不会用演示数据补齐。` : "模拟数据 · 点击节点先看具体内容，再追踪事件与原始字段。输入框仅替换用户消息；模型、工具和审批结果均使用演示脚本。"}
             </p>
           </section>
           <footer className="cp-footer">
             <span>
-              AGENT MATRIX <span>/</span> CODEX RUNTIME EXPLORER
+              AGENT MATRIX <span>/</span> {providerName.toUpperCase()} RUNTIME EXPLORER
             </span>
             <span>{liveMode ? "实时观测 · 只读展示" : "原型数据 · 不执行真实任务"}</span>
           </footer>

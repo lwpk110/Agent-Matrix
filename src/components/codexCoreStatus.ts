@@ -1,5 +1,6 @@
 import type { LogEntry, RealSystemStatus, WsConnectionState } from "../types/matrix";
-import type { CodexRolloutTelemetry } from "../types/codexTelemetry";
+import type { RuntimeTelemetry } from "../types/runtime";
+import { getRuntimeConnection, type RuntimeAgentPlugin, type RuntimeConnectionStatus } from "../services/runtimePlugins";
 
 export type CoreStatus = {
   state: "normal" | "compacting" | "compacted" | "warning" | "error";
@@ -13,7 +14,11 @@ type StatusInput = {
   turnId: string;
   connectionState: WsConnectionState;
   realStatus?: RealSystemStatus | null;
-  telemetry?: CodexRolloutTelemetry | null;
+  telemetry?: RuntimeTelemetry | null;
+  provider?: string;
+  providerLabel?: string;
+  plugin?: RuntimeAgentPlugin;
+  connection?: RuntimeConnectionStatus;
   now?: number;
 };
 
@@ -58,15 +63,24 @@ function failed(event: ObservedEvent): boolean {
 }
 
 function recovered(event: ObservedEvent): boolean {
-  return event.name === "PostToolUse" || event.name === "AppServerFinalAnswer" ||
+  return event.name === "PostToolUse" || event.name === "AppServerFinalAnswer" || event.name === "Stop" ||
     (event.name === "AppServerCommandExecution" && !failed(event) && String(event.payload.status).toLowerCase() === "completed") ||
     (event.name === "AppServerMcpToolCall" && !failed(event) && String(event.payload.status).toLowerCase() === "completed");
 }
 
 export function codexCoreStatus(input: StatusInput): CoreStatus {
   const { now = Date.now() } = input;
-  if (input.connectionState === "offline" || input.realStatus?.codexHookGatewayState === "offline" || input.realStatus?.codexAppServerState === "offline") {
-    return { state: "error", label: "网络连接异常", detail: "本机 Codex 事件网关或 app-server 已断开。" };
+  const provider = input.provider || input.plugin?.provider;
+  const providerLabel = input.providerLabel || input.plugin?.label || (input.provider === "claude" ? "Claude Code" : input.provider === "codex" ? "Codex" : "Agent");
+  const connection = input.connection || (input.plugin ? getRuntimeConnection(input.plugin, input.realStatus) : input.provider === "claude"
+    ? { hookGatewayState: input.realStatus?.claudeHookGatewayState }
+    : input.provider === "codex" || !input.provider
+      ? { hookGatewayState: input.realStatus?.codexHookGatewayState, appServerState: input.realStatus?.codexAppServerState }
+      : {});
+  const hookState = connection.hookGatewayState;
+  const appServerOffline = connection.appServerState === "offline";
+  if (input.connectionState === "offline" || hookState === "offline" || appServerOffline) {
+    return { state: "error", label: "网络连接异常", detail: `本机 ${providerLabel} 事件网关${connection.appServerState ? "或 app-server" : ""}已断开。` };
   }
 
   const windowTokens = input.telemetry?.contextWindowTokens;
@@ -75,10 +89,10 @@ export function codexCoreStatus(input: StatusInput): CoreStatus {
     return { state: "error", label: "上下文超出窗口", detail: `${contextTokens.toLocaleString()} / ${windowTokens.toLocaleString()} tokens` };
   }
 
-  const sessionLogs = input.logs.filter(log => log.runtimeEvent?.sessionId === input.sessionId);
+  const sessionLogs = input.logs.filter(log => (!provider || log.runtimeEvent?.provider === provider) && log.runtimeEvent?.sessionId === input.sessionId);
   const currentTurnLogs = sessionLogs.filter(log => log.runtimeEvent?.turnId === input.turnId);
   const scopedLogs = currentTurnLogs.length ? currentTurnLogs : sessionLogs;
-  const events: ObservedEvent[] = scopedLogs.map(log => ({ log, name: log.runtimeEvent?.eventName || "", payload: payloadOf(log) }));
+  const events: ObservedEvent[] = scopedLogs.slice().sort((a, b) => Date.parse(a.runtimeEvent?.timestamp || a.timestamp) - Date.parse(b.runtimeEvent?.timestamp || b.timestamp)).map(log => ({ log, name: log.runtimeEvent?.eventName || "", payload: payloadOf(log) }));
   const failureIndex = events.reduce((last, event, index) => failed(event) ? index : last, -1);
   const recoveryIndex = events.reduce((last, event, index) => recovered(event) ? index : last, -1);
   if (failureIndex > recoveryIndex) {
@@ -95,16 +109,19 @@ export function codexCoreStatus(input: StatusInput): CoreStatus {
   }
 
   const compactionIndex = events.reduce((last, event, index) => /^(PreCompact|PostCompact|AppServerContextCompaction)$/.test(event.name) ? index : last, -1);
+  const completedAfterCompaction = events.reduce((last, event, index) => event.name === "Stop" || event.name === "AppServerFinalAnswer" ? index : last, -1);
+  if (completedAfterCompaction >= 0 && completedAfterCompaction === events.length - 1) return { state: "normal", label: "回合已完成", detail: `${providerLabel} 已结束本回合，等待下一条运行时事件。` };
+  if (completedAfterCompaction > compactionIndex) return { state: "normal", label: "回合已完成", detail: `${providerLabel} 已结束本回合，等待下一条运行时事件。` };
   if (compactionIndex >= 0) {
     const event = events[compactionIndex];
     if (event.name === "PreCompact") {
       const age = now - observedTime(event.log, now);
       return age <= 60_000
-        ? { state: "compacting", label: "上下文压缩中", detail: "Codex 正在整理上下文以继续本回合。" }
+        ? { state: "compacting", label: "上下文压缩中", detail: `${providerLabel} 正在整理上下文以继续本回合。` }
         : { state: "warning", label: "压缩尚未确认完成", detail: "已收到 PreCompact，但还没有观测到 PostCompact。" };
     }
     if (now - observedTime(event.log, now) <= 5_000) {
-      return { state: "compacted", label: "上下文已压缩", detail: "Codex 已记录本回合的上下文压缩。" };
+      return { state: "compacted", label: "上下文已压缩", detail: `${providerLabel} 已记录本回合的上下文压缩。` };
     }
   }
 
@@ -112,5 +129,5 @@ export function codexCoreStatus(input: StatusInput): CoreStatus {
     return { state: "warning", label: "上下文接近容量上限", detail: `${contextTokens.toLocaleString()} / ${windowTokens.toLocaleString()} tokens` };
   }
 
-  return { state: "normal", label: "Codex 核心运行中", detail: "等待下一条运行时事件。" };
+  return { state: "normal", label: `${providerLabel} 运行中`, detail: "等待下一条运行时事件。" };
 }

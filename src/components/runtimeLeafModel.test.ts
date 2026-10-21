@@ -100,3 +100,22 @@ test("repeated calls for the same tool share one leaf with an accurate count", (
   assert.equal(leaves[0].count, 3);
   assert.equal(leaves[0].callId, "call-3");
 });
+
+
+test("transcript 工具无需伪造 Hook 事件即可出现在真实节点叶子", () => {
+  const base = createCodexRuntimeMock();
+  const session = { ...base, isReal: true, calls: [{ ...base.calls[0], id: "metadata-call", name: "Bash", metadataOnly: true, resultReceived: false, status: "unknown" as const }], events: [] };
+  const leaves = runtimeLeaves("tool", session, []);
+  assert.equal(leaves.length, 1);
+  assert.equal(leaves[0].callId, "metadata-call");
+  assert.match(leaves[0].summary, /结果未观测/);
+  assert.equal(leaves[0].eventId, undefined);
+});
+
+test("统计工具在本地、MCP 与搜索叶子中互斥分类", () => {
+  const base = createCodexRuntimeMock();
+  const session = { ...base, isReal: true, events: [], calls: ["mcp__docs__search", "WebSearch", "Bash"].map((name, index) => ({ ...base.calls[0], id: `stats-${index}`, name, type: index < 2 ? "mcp" as const : "local" as const, metadataOnly: true })) };
+  assert.deepEqual(runtimeLeaves("mcp", session, []).map(leaf => leaf.name), ["mcp__docs__search"]);
+  assert.deepEqual(runtimeLeaves("search", session, []).map(leaf => leaf.name), ["WebSearch"]);
+  assert.deepEqual(runtimeLeaves("tool", session, []).map(leaf => leaf.name), ["Bash"]);
+});

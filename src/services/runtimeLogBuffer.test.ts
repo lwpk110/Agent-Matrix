@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { LogEntry } from '../types/matrix';
-import { appendRuntimeLog, pairRuntimeLogs } from './runtimeLogBuffer';
+import { appendRuntimeLog, pairRuntimeLogs, rememberRuntimeEventIdentity } from './runtimeLogBuffer';
 
 function log(id: string, runtime = true, sessionId = 'session-a', turnId = 'turn-a'): LogEntry {
   return {
@@ -32,4 +32,14 @@ test('updates only the exact paired event in the matching session and turn', () 
   assert.equal(updated[0].runtimeEvent?.observedIntervalMs, 42);
   assert.equal(updated[1], logs[1]);
   assert.equal(updated[2], logs[2]);
+});
+
+test('deduplicates only the same provider, session, turn and event identity', () => {
+  const seen = new Set<string>();
+  const event = { eventId: 'shared-event' };
+  assert.equal(rememberRuntimeEventIdentity(seen, { ...event, provider: 'codex', sessionId: 'session-a', turnId: 'turn-a' }), true);
+  assert.equal(rememberRuntimeEventIdentity(seen, { ...event, provider: 'claude', sessionId: 'session-a', turnId: 'turn-a' }), true);
+  assert.equal(rememberRuntimeEventIdentity(seen, { ...event, provider: 'codex', sessionId: 'session-b', turnId: 'turn-a' }), true);
+  assert.equal(rememberRuntimeEventIdentity(seen, { ...event, provider: 'codex', sessionId: 'session-a', turnId: 'turn-b' }), true);
+  assert.equal(rememberRuntimeEventIdentity(seen, { ...event, provider: 'codex', sessionId: 'session-a', turnId: 'turn-a' }), false);
 });

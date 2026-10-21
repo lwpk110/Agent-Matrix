@@ -13,23 +13,30 @@ import {
   X,
 } from "lucide-react";
 import { createCodexRuntimeMock, type MockNodeId } from "../codexRuntimeMock";
-import type { LogEntry } from "../../types/matrix";
-import { createCodexRuntimeSessionFromLogs, latestObservedCodexEvent } from "../codexRuntimeAdapter";
-import { RUNTIME_EDGES, RUNTIME_NODES, type RuntimeNode } from "./model";
+import type { LogEntry, RealSystemStatus } from "../../types/matrix";
+import { createRuntimeSessionFromLogs, getRuntimeConnection, getRuntimePlugin, listRuntimePlugins } from "../../services/runtimePlugins";
+import { createEmptyRuntimeSession, useRuntimeTelemetry } from "../../services/runtimeObservation";
+import { RuntimeEmptyState } from "../RuntimeEmptyState";
+import { RUNTIME_EDGES, RUNTIME_NODES, coreGlyph, providerCoreColor, type RuntimeNode } from "./model";
 import { glowTexture } from "../topology/visualAssets";
 import { createEnergyConduit } from "./energyConduit";
 import { runtimeFlow } from "../runtimeFlow";
-import type { CodexRolloutTelemetry } from "../../types/codexTelemetry";
+import { advanceRuntimeVisualPlayback, createRuntimeVisualPlayback, currentRuntimeVisualCue } from "../runtimeVisualPlayback";
+import { codexCoreStatus } from "../codexCoreStatus";
+import { ClaudeMark } from "../ClaudeMark";
+import { CodexMark } from "../CodexMark";
 import "../codex3d/Codex3DTopology.css";
 
 const nodeById = new Map(RUNTIME_NODES.map((node) => [node.id, node]));
 
-function glyphTexture(node: RuntimeNode) {
+function glyphTexture(node: RuntimeNode, coreIcon: 'activity' | 'sparkles' | 'claude-mark' | 'codex-mark' = 'activity') {
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = 256;
   const context = canvas.getContext("2d")!;
   context.translate(32, 32);
-  context.scale(8, 8);
+  const isBrandMark = node.id === 'model' && (coreIcon === 'claude-mark' || coreIcon === 'codex-mark');
+  const markScale = node.id === 'model' && coreIcon === 'claude-mark' ? 192 / 125 : 8;
+  context.scale(markScale, markScale);
   for (const [blur, opacity] of [
     [10, 0.18],
     [4, 0.45],
@@ -39,10 +46,14 @@ function glyphTexture(node: RuntimeNode) {
     context.shadowColor = "#d8f4ff";
     context.shadowBlur = blur;
     context.strokeStyle = "#fff";
+    context.fillStyle = "#fff";
     context.lineWidth = 1.45;
     context.lineCap = "round";
     context.lineJoin = "round";
-    node.glyph.forEach((path) => context.stroke(new Path2D(path)));
+    (node.id === 'model' ? coreGlyph(coreIcon) : node.glyph).forEach((path) => {
+      if (isBrandMark) context.fill(new Path2D(path), "evenodd");
+      else context.stroke(new Path2D(path));
+    });
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -186,7 +197,7 @@ function nodeRole(node: RuntimeNode) {
   } as Record<MockNodeId, string>)[node.id];
 }
 
-export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: LogEntry[]; prototypeMode?: boolean }) {
+export function Codex3DTopology({ logs = [], prototypeMode = false, provider = "codex", connectionState = "simulation", realStatus, historyLoaded = true, historyError = false }: { logs?: LogEntry[]; prototypeMode?: boolean; provider?: string; connectionState?: "connected" | "probing" | "offline" | "simulation"; realStatus?: RealSystemStatus | null; historyLoaded?: boolean; historyError?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const labelRefs = useRef(new Map<MockNodeId, HTMLButtonElement>());
   const [selected, setSelected] = useState<MockNodeId | null>(null);
@@ -199,50 +210,31 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
   const [traceReady, setTraceReady] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [lineageOpen, setLineageOpen] = useState(false);
-  const [rolloutTelemetry, setRolloutTelemetry] = useState<CodexRolloutTelemetry | null>(null);
   const [stats, setStats] = useState({
     fps: 60,
     pulses: 1,
   });
-  const observedSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs), [logs]);
+  const plugin = getRuntimePlugin(provider);
+  const runtimeConnection = getRuntimeConnection(plugin, realStatus);
+  const runtimeOffline = runtimeConnection.hookGatewayState === "offline" || runtimeConnection.appServerState === "offline";
+  const providerName = plugin.label;
+  const providerColor = plugin.visual?.accent || providerCoreColor(plugin.provider);
+  const observedSession = useMemo(() => prototypeMode ? null : createRuntimeSessionFromLogs(plugin, logs), [logs, plugin, prototypeMode]);
+  const liveTelemetry = useRuntimeTelemetry(plugin, observedSession);
+  const liveSession = useMemo(() => prototypeMode ? null : createRuntimeSessionFromLogs(plugin, logs, liveTelemetry), [logs, liveTelemetry, plugin, prototypeMode]);
+  const demoSession = useMemo(() => prototypeMode ? createCodexRuntimeMock() : null, [prototypeMode]);
+  const session = liveSession || demoSession || createEmptyRuntimeSession(plugin.provider, historyError ? "error" : connectionState === "offline" || runtimeOffline ? "offline" : "waiting");
+  const [statusClock, setStatusClock] = useState(() => Date.now());
   useEffect(() => {
-    if (!observedSession) {
-      setRolloutTelemetry(null);
-      return;
-    }
-    const { id: sessionId, turnId } = observedSession;
-    let active = true;
-    let pending = false;
-    const refresh = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const query = new URLSearchParams({ sessionId, turnId });
-        const response = await fetch(`/api/real/codex-rollout?${query}`, { cache: "no-store" });
-        if (!response.ok) throw new Error("Rollout telemetry unavailable");
-        const result = await response.json() as { telemetry: CodexRolloutTelemetry | null };
-        if (active) setRolloutTelemetry(result.telemetry);
-      } catch {
-        if (active) setRolloutTelemetry(null);
-      } finally {
-        pending = false;
-      }
-    };
-    setRolloutTelemetry(null);
-    void refresh();
-    const timer = window.setInterval(refresh, 4000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [observedSession?.id, observedSession?.turnId]);
-  const liveTelemetry = rolloutTelemetry?.sessionId === observedSession?.id && rolloutTelemetry?.turnId === observedSession?.turnId
-    ? rolloutTelemetry
-    : null;
-  const liveSession = useMemo(() => createCodexRuntimeSessionFromLogs(logs, liveTelemetry), [logs, liveTelemetry]);
-  const demoSession = useMemo(() => createCodexRuntimeMock(), []);
-  const session = liveSession || demoSession;
+    if (!liveSession) return;
+    const timer = window.setInterval(() => setStatusClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [liveSession?.id, liveSession?.turnId]);
+  const coreStatus = useMemo(() => codexCoreStatus({ logs, sessionId: session.id, turnId: session.turnId, connectionState, realStatus, telemetry: liveTelemetry, plugin, now: statusClock }), [logs, session.id, session.turnId, connectionState, realStatus, liveTelemetry, plugin, statusClock]);
+  const visualRef = useRef({ providerColor, state: coreStatus.state });
+  visualRef.current = { providerColor, state: coreStatus.state };
   const liveMode = Boolean(liveSession);
+  const emptyMode = !liveMode && !prototypeMode;
   const observedTools = useMemo(() => {
     const groups = new Map<string, number>();
     session.calls.filter(call => call.type === "local").forEach(call => groups.set(call.name, (groups.get(call.name) ?? 0) + 1));
@@ -270,10 +262,44 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
     ?? (session.usage.inputTokens !== null && session.usage.outputTokens !== null
       ? session.usage.inputTokens + session.usage.outputTokens
       : null);
-  const latestObservedEvent = useMemo(() => liveSession ? latestObservedCodexEvent(liveSession, logs) : undefined, [liveSession, logs]);
+  const modelRequestCount = prototypeMode ? session.rounds.length : plugin.provider === "claude"
+    ? liveSession?.rolloutTelemetry?.modelRequestCount ?? null
+    : liveSession?.capabilities?.rolloutTelemetry
+      ? liveSession.rolloutTelemetry?.modelRequestCount ?? (session.rounds.length || null)
+      : session.rounds.length || null;
+  const modelSource = liveSession?.rolloutTelemetry?.model
+    ? "模型来自实际请求统计"
+    : session.model !== "未采集" ? "模型来自运行时事件" : "模型来源未采集";
+  const inputUsage = liveSession?.rolloutTelemetry?.turnUsage;
+  const hasInputBreakdown = [inputUsage?.nativeInputTokens, inputUsage?.cacheCreationInputTokens, inputUsage?.cacheReadInputTokens]
+    .some((value) => value !== null && value !== undefined);
+  const contextMetadata = liveSession?.rolloutTelemetry?.contextMetadata;
+  const promptMetadata = liveSession?.rolloutTelemetry?.promptMetadata;
+  const metadataKey = [
+    contextMetadata && contextMetadata.instructionFileCount !== null && `context:${contextMetadata.instructionFileCount}:${contextMetadata.scope}:${contextMetadata.observedAt ?? ""}`,
+    promptMetadata && (promptMetadata.systemSegmentCount !== null || promptMetadata.toolDefinitionCount !== null) && `prompt:${promptMetadata.systemSegmentCount ?? ""}:${promptMetadata.toolDefinitionCount ?? ""}:${promptMetadata.scope}:${promptMetadata.observedAt ?? ""}`,
+  ].filter(Boolean).join("|") || undefined;
+  const eventSignature = session.events.map(event => `${event.id}:${event.status}`).join("|");
+  const visualPlayback = useRef(createRuntimeVisualPlayback({ provider: plugin.provider, sessionId: session.id, turnId: session.turnId, events: session.events, metadataKey, modelRequestCount, isLiveSession: liveMode }));
+  const [visualClock, setVisualClock] = useState(() => Date.now());
+  useEffect(() => {
+    const identity = `${plugin.provider}:${session.id}:${session.turnId}`;
+    const observation = { provider: plugin.provider, sessionId: session.id, turnId: session.turnId, events: session.events, metadataKey, modelRequestCount, isLiveSession: liveMode, liveNewTurn: liveMode && visualPlayback.current.isLiveSession && visualPlayback.current.identity !== identity };
+    visualPlayback.current = advanceRuntimeVisualPlayback(visualPlayback.current, observation, visualClock);
+  }, [plugin.provider, session.id, session.turnId, eventSignature, metadataKey, modelRequestCount, liveMode]);
+  useEffect(() => {
+    if (!liveMode || paused) return;
+    const timer = window.setInterval(() => setVisualClock(value => value + 120), 120);
+    return () => window.clearInterval(timer);
+  }, [liveMode, paused]);
   const selectedNode = selected ? nodeById.get(selected) : undefined;
   const currentEvent = traceReady ? session.events[progress] : undefined;
-  const visualEvent = replaying ? currentEvent : liveMode ? latestObservedEvent : currentEvent;
+  const liveVisualCue = !replaying && liveMode ? currentRuntimeVisualCue(visualPlayback.current, visualClock) : undefined;
+  const visualEvidence = liveVisualCue?.cue.source === "derived"
+    ? liveVisualCue.cue.evidence === "metadata" ? "统计派生 · 快照已观测" : "统计派生 · 请求数更新"
+    : undefined;
+  const visualEvent = replaying ? currentEvent : liveVisualCue?.cue.event;
+  const visualFlow = replaying ? runtimeFlow(currentEvent) : liveVisualCue?.cue.flow;
   const selectedEvents = selectedNode
     ? session.events
         .filter((event) => event.node === selectedNode.id || event.relatedNodes.includes(selectedNode.id))
@@ -283,7 +309,7 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
   const nodeNote = (node: RuntimeNode) => {
     if (!liveMode) return node.note;
     const nodeEvents = session.events.filter(event => event.node === node.id);
-    if (node.id === "model") return session.rounds.length ? `${session.rounds.length} 条请求记录` : "模型请求未采集";
+    if (node.id === "model") return modelRequestCount === null ? "模型请求未采集" : `${modelRequestCount} 条请求记录`;
     if (nodeEvents.length) return `${nodeEvents.length} 条事件已采集`;
     return "本回合暂无事件";
   };
@@ -292,8 +318,8 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
     const lastEvent = session.events.filter(event => event.node === node.id).at(-1);
     return lastEvent?.summary || "当前会话没有采集到此节点事件；拓扑位置表示运行阶段，不代表本回合实际执行。";
   };
-  const live = useRef({ selected, hovered, paused, autoRotate, view, currentEvent: visualEvent, playbackSpeed, liveMode, replaying });
-  live.current = { selected, hovered, paused, autoRotate, view, currentEvent: visualEvent, playbackSpeed, liveMode, replaying };
+  const live = useRef({ selected, hovered, paused, autoRotate, view, currentEvent: visualEvent, visualFlow, visualFlowActive: replaying || Boolean(liveVisualCue?.active), visualDurationMs: liveVisualCue?.cue.durationMs, visualKey: liveVisualCue?.cue.id, playbackSpeed, liveMode, replaying });
+  live.current = { selected, hovered, paused, autoRotate, view, currentEvent: visualEvent, visualFlow, visualFlowActive: replaying || Boolean(liveVisualCue?.active), visualDurationMs: liveVisualCue?.cue.durationMs, visualKey: liveVisualCue?.cue.id, playbackSpeed, liveMode, replaying };
 
   useEffect(() => {
     if (!replaying || paused) return;
@@ -347,7 +373,7 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
       mobileLayout ? mobilePositions[node.id] : node.position;
     const textures = [
       glowTexture(),
-      ...RUNTIME_NODES.map((node) => glyphTexture(node)),
+      ...RUNTIME_NODES.map((node) => glyphTexture(node, plugin.visual?.coreIcon || 'activity')),
     ];
     const glow = textures[0];
     const objectMap = new Map<
@@ -410,6 +436,7 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
       );
       ring.rotation.x = -Math.PI / 2;
       group.add(ring);
+      if (node.id === "model") group.userData.coreMaterials = [icon.material, aura.material, ring.material];
       const accent = createNodeAccent(node);
       group.add(accent);
       const statusDot = new THREE.Mesh(
@@ -623,7 +650,7 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       const moving = !state.paused && !reducedMotion.matches;
-      const eventKey = state.currentEvent ? `${state.currentEvent.id}:${state.currentEvent.status}` : undefined;
+      const eventKey = state.visualKey ?? (state.currentEvent ? `${state.currentEvent.id}:${state.currentEvent.status}` : undefined);
       if (eventId !== eventKey) {
         eventId = eventKey;
         eventAge = state.paused && state.currentEvent ? 0.45 : 0;
@@ -664,11 +691,12 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
           ? state.currentEvent.status === "waiting" ? "waiting"
             : state.currentEvent.status === "failed" ? "failed"
               : state.currentEvent.status === "completed" || state.currentEvent.status === "allowed" ? "completed" : "active"
-          : state.currentEvent?.relatedNodes.includes(node.id) ? "active" : "idle";
+          : state.currentEvent?.relatedNodes.includes(node.id) || (state.visualFlow && (state.visualFlow.from === node.id || state.visualFlow.to === node.id)) ? "active" : "idle";
         const active =
           state.selected === node.id ||
           state.currentEvent?.node === node.id ||
-          state.currentEvent?.relatedNodes.includes(node.id);
+          state.currentEvent?.relatedNodes.includes(node.id) ||
+          (state.visualFlow && (state.visualFlow.from === node.id || state.visualFlow.to === node.id));
         const intensity = nodeEnergy.get(node.id) || 0;
         const targetIntensity = active ? 1 : 0;
         const nextIntensity = THREE.MathUtils.lerp(
@@ -714,9 +742,9 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
         visual.arrival.scale.setScalar(1 + Math.min(1, arrivalAge / 0.8) * 0.8);
         visual.arrival.material.opacity = Math.max(0, 1 - arrivalAge / 0.8) * 0.65;
       }
-      const flow = runtimeFlow(state.currentEvent);
-      const nextEvent = state.currentEvent && session.events[session.events.indexOf(state.currentEvent) + 1];
-      const duration = state.liveMode && !state.replaying ? 1.5
+      const flow = state.visualFlow;
+      const nextEvent = state.currentEvent && session.events[session.events.findIndex(event => event.id === state.currentEvent?.id) + 1];
+      const duration = state.liveMode && !state.replaying ? (state.visualDurationMs ?? 900) / 1000
         : Math.min(1500, Math.max(420, ((nextEvent?.offsetMs ?? 0) - (state.currentEvent?.offsetMs ?? 0)) * 0.82) / state.playbackSpeed) / 1000;
       const pulseStep = elapsed / 1.85;
       let activePackets = 0;
@@ -739,9 +767,9 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
         const group = item.phase < 4 ? [0, 4] : item.phase < 8 ? [4, 4] : [8, lines.length - 8];
         const idleAge = pulseStep + group[0] * 0.23;
         const active = flow
-          ? hot
+          ? hot && state.visualFlowActive
           : !state.liveMode && !state.currentEvent && group[0] + Math.floor(idleAge) % group[1] === item.phase;
-        const rawProgress = state.currentEvent ? (eventAge / duration) % 1 : idleAge % 1;
+        const rawProgress = flow ? Math.min(1, eventAge / duration) : idleAge % 1;
         const eased = Math.min(1, rawProgress / 0.86);
         const pulseProgress = eased * eased * eased * (eased * (eased * 6 - 15) + 10);
         if (active && moving && rawProgress < 1) activePackets++;
@@ -750,7 +778,7 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
         item.curve.getPoint(trimStart + pulseProgress * (trimEnd - trimStart), item.packet.position);
         (item.packet.material as THREE.SpriteMaterial).opacity = active && !reducedMotion.matches ? Math.min(1, rawProgress * 5) * Math.min(1, (1 - rawProgress) * 6) * (focused ? 1 : 0.08) : 0;
         const edgeId = `${item.edge.from}:${item.edge.to}`;
-        const pulseCycle = Math.floor(eventAge / duration);
+        const pulseCycle = 0;
         if (active && moving && rawProgress > 0.82 && rawProgress < 0.9 && arrivalCycles.get(edgeId) !== pulseCycle) {
           arrivals.set(item.edge.to, elapsed);
           arrivalCycles.set(edgeId, pulseCycle);
@@ -770,6 +798,10 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
         (orbit.material as THREE.MeshBasicMaterial).opacity =
           0.48 + Math.sin(elapsed * 1.15 + index) * 0.12;
       });
+      const coreNode = objectMap.get("model");
+      const statusColor = visualRef.current.state === "error" ? new THREE.Color("#ff6f7b") : visualRef.current.state === "compacting" || visualRef.current.state === "warning" ? new THREE.Color("#f4cd77") : new THREE.Color(visualRef.current.providerColor);
+      (coreNode?.group.userData.coreMaterials || []).forEach((material: THREE.Material) => { if (material instanceof THREE.SpriteMaterial || material instanceof THREE.MeshBasicMaterial) material.color.copy(statusColor); });
+      coreOrbits.forEach(orbit => (orbit.material as THREE.MeshBasicMaterial).color.copy(statusColor));
       stars.rotation.y = elapsed * 0.008;
       renderer.render(scene, camera);
       RUNTIME_NODES.forEach((node) => {
@@ -818,18 +850,20 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, []);
+  }, [emptyMode, plugin.provider, plugin.visual?.coreIcon, providerColor]);
+
+  if (emptyMode) return <RuntimeEmptyState plugin={plugin} connectionState={connectionState} connection={runtimeConnection} historyLoaded={historyLoaded} historyError={historyError} view="3d" />;
 
   return (
     <main className="codex-3d-page">
       <header className="codex-3d-header">
-        <a href={prototypeMode ? '/codex/prototype' : '/codex'} className="codex-3d-back">
+        <a href={prototypeMode ? '/codex/prototype' : plugin.paths.twoDimensional} className="codex-3d-back">
           <ArrowLeft size={15} />
           返回 2D Runtime
         </a>
         <div>
             <span className="codex-3d-kicker">
-            <Sparkles size={13} /> CODEX RUNTIME / 3D TOPOLOGY · {liveMode ? "LIVE" : "DEMO"}
+            {plugin.visual?.coreIcon === "claude-mark" ? <ClaudeMark width={15} height={15} style={{color: providerColor}} /> : plugin.visual?.coreIcon === "codex-mark" ? <CodexMark width={15} height={15} /> : <Sparkles size={13} />} {providerName.toUpperCase()} RUNTIME / 3D TOPOLOGY · {liveMode ? "LIVE" : emptyMode ? "WAITING" : "DEMO"}
           </span>
           <h1>
             Runtime <span>Observatory</span>
@@ -839,13 +873,16 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
           </p>
         </div>
         <div className="codex-3d-actions">
+          {!prototypeMode && listRuntimePlugins().filter(item => item.provider !== plugin.provider).map(item => (
+            <a key={item.provider} href={item.paths.threeDimensional} className="codex-3d-back">{item.label} 3D</a>
+          ))}
           <a href={prototypeMode ? '/codex/3d' : '/codex/prototype/3d'} className="codex-3d-back">
             {prototypeMode ? '对比实时 3D' : '查看模拟原型'}
           </a>
           <button className={lineageOpen ? "is-selected" : ""} aria-expanded={lineageOpen} onClick={() => setLineageOpen(value => !value)}>
             <Network size={14} />会话血缘
           </button>
-          <button
+          <button disabled={emptyMode}
             onClick={() => {
               setProgress(0);
               setTraceReady(true);
@@ -879,7 +916,7 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
               }}
               key={node.id}
               className={[
-                selected === node.id || currentEvent?.node === node.id ? "is-active" : "",
+                selected === node.id || currentEvent?.node === node.id || visualFlow?.from === node.id || visualFlow?.to === node.id ? "is-active" : "",
                 hovered && hovered !== node.id && !RUNTIME_EDGES.some(edge =>
                   (edge.from === hovered && edge.to === node.id) ||
                   (edge.to === hovered && edge.from === node.id)) ? "is-dimmed" : "",
@@ -899,11 +936,12 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
         </div>
         <div className="codex-3d-hud">
           <span>
-            <i /> {liveMode ? "CODEX EVENT STREAM · LIVE" : "MOCK EVENT STREAM"}
+            <i /> {liveMode ? `${providerName.toUpperCase()} EVENT STREAM · LIVE` : emptyMode ? "WAITING FOR EVENT STREAM" : "MOCK EVENT STREAM"}
           </span>
           <span>
             {session.events.length} EVENTS · {session.calls.length} CALLS
           </span>
+          {visualEvidence && <span>{visualEvidence}</span>}
           {replaying && (
             <span>
               {progress + 1} / {session.events.length} · {currentEvent?.title}
@@ -956,7 +994,7 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
           </div>
           <span><i />{replaying ? paused ? "回放已暂停" : "会话回放" : "拓扑预览"}<small>{liveMode ? `${session.id} / ${session.turnId}` : "MOCK SESSION / TURN 08"}</small></span>
           <div><small>{currentEvent?.name ?? "AGENT RUNTIME / DATA FLOW"}</small><strong>{currentEvent?.title ?? "输入 → 上下文 → 模型 ⇄ 工具 → 返回用户"}</strong></div>
-          <a href={`${prototypeMode ? '/codex/prototype' : '/codex'}${currentEvent ? `?node=${currentEvent.node}` : ""}`}>查看事件详情 <Info size={13} /></a>
+          <a href={`${prototypeMode ? '/codex/prototype' : plugin.paths.twoDimensional}${currentEvent ? `?node=${currentEvent.node}` : ""}`}>查看事件详情 <Info size={13} /></a>
         </div>
         {lineageOpen && (
           <aside className="codex-3d-lineage" aria-label="会话知识图谱">
@@ -964,15 +1002,18 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
               <div><span><Network size={14} /> SESSION LINEAGE</span><strong>会话知识图谱</strong></div>
               <button aria-label="关闭会话血缘" onClick={() => setLineageOpen(false)}><X size={15} /></button>
             </header>
-            <div className="codex-3d-lineage-session"><span>{liveMode ? "本机运行记录" : "演示会话"}</span><strong>{session.id}</strong><small>{session.turnId} · {session.model}</small></div>
+          <div className="codex-3d-lineage-session" style={{ borderColor: providerColor }}><span>{liveMode ? "本机运行记录" : "演示会话"}</span><strong>{session.id}</strong><small>{session.turnId} · {session.model}</small>{liveMode && <small>{modelSource}</small>}</div>
             <div className="codex-3d-lineage-links" aria-hidden="true"><i /><i /><i /><i /></div>
             <div className="codex-3d-lineage-metrics">
-              <button onClick={() => setSelected("model")}><span>本轮 Token</span><strong>{totalTokens === null ? "未采集" : totalTokens.toLocaleString()}</strong><small>输入 {session.usage.inputTokens?.toLocaleString() ?? "未采集"} · 输出 {session.usage.outputTokens?.toLocaleString() ?? "未采集"}</small></button>
+              <button onClick={() => setSelected("model")}><span>本轮 Token</span><strong>{totalTokens === null ? "未采集" : totalTokens.toLocaleString()}</strong><small>{hasInputBreakdown
+                ? `输入合计 ${session.usage.inputTokens?.toLocaleString() ?? "未采集"} = 原生 ${inputUsage?.nativeInputTokens?.toLocaleString() ?? "未采集"} + 创建缓存 ${inputUsage?.cacheCreationInputTokens?.toLocaleString() ?? "未采集"} + 读取缓存 ${inputUsage?.cacheReadInputTokens?.toLocaleString() ?? "未采集"}`
+                : `输入 ${session.usage.inputTokens?.toLocaleString() ?? "未采集"} · 输出 ${session.usage.outputTokens?.toLocaleString() ?? "未采集"}`}</small></button>
               <button onClick={() => setSelected("tool")}><span>本地工具</span><strong>{observedTools.length} 种 · {session.calls.filter(call => call.type === "local").length} 次</strong><small>{observedTools.map(item => item.name).join(" · ") || "未观测到本地工具调用"}</small></button>
               <button onClick={() => setSelected("mcp")}><span>MCP 服务</span><strong>{observedMcp.length} 种 · {session.calls.filter(call => call.type === "mcp").length} 次</strong><small>{observedMcp.map(item => `${item.name}: ${[...item.tools].map(([tool, count]) => `${tool} ×${count}`).join(", ")}`).join(" · ") || "未观测到 MCP 调用"}</small></button>
               <button onClick={() => setSelected("skill")}><span>Skill</span><strong>{observedSkills.length} 项已观测</strong><small>{observedSkills.join(" · ") || "未观测到 Skill 加载事件"}</small></button>
+              {liveMode && plugin.provider === "claude" && <button onClick={() => setSelected("context")}><span>上下文快照</span><strong>{contextMetadata?.instructionFileCount === null || contextMetadata?.instructionFileCount === undefined ? "未采集" : `${contextMetadata.instructionFileCount} 条规则`}</strong><small>{promptMetadata?.systemSegmentCount === null || promptMetadata?.systemSegmentCount === undefined ? "提示词快照未采集" : `系统 ${promptMetadata.systemSegmentCount} 段 · 工具定义 ${promptMetadata.toolDefinitionCount ?? "未采集"} 条`}</small></button>}
             </div>
-            <footer><span>关联模型请求</span><b>{liveSession?.rolloutTelemetry?.modelRequestCount ?? (session.rounds.length || "未采集")}</b><span>调用状态</span><b>{session.calls.filter(call => call.status === "failed").length ? `${session.calls.filter(call => call.status === "failed").length} 次失败` : "无失败记录"}</b></footer>
+            <footer><span>关联模型请求</span><b>{modelRequestCount ?? "未采集"}</b><span>调用状态</span><b>{session.calls.filter(call => call.status === "failed").length ? `${session.calls.filter(call => call.status === "failed").length} 次失败` : "无失败记录"}</b></footer>
           </aside>
         )}
       </section>
@@ -1023,7 +1064,7 @@ export function Codex3DTopology({ logs = [], prototypeMode = false }: { logs?: L
               </div>
             )) : <p className="codex-3d-events-empty">当前会话没有该节点的事件记录</p>}
           </div>
-          <a href={`${prototypeMode ? '/codex/prototype' : '/codex'}?node=${selectedNode.id}`}>
+          <a href={`${prototypeMode ? '/codex/prototype' : plugin.paths.twoDimensional}?node=${selectedNode.id}`}>
             进入 2D 详情 <Info size={13} />
           </a>
         </aside>

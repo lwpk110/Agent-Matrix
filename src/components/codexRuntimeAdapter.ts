@@ -212,7 +212,9 @@ export function createCodexRuntimeSessionFromLogs(logs: LogEntry[], rolloutTelem
       status: statusFor(log, payload),
       callId,
       roundId: modelId,
-      durationMs: log.runtimeEvent.observedIntervalMs ?? numberValue(payload.durationMs, payload.duration_ms),
+      // Hook 前后事件间隔仅用于证明采样先后，不能伪装成工具执行耗时。
+      durationMs: numberValue(payload.durationMs, payload.duration_ms),
+      observedIntervalMs: log.runtimeEvent.observedIntervalMs,
       hasToolResponse: log.runtimeEvent.source === "codex-hook" && log.runtimeEvent.hasToolResponse,
       input,
       output,

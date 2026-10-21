@@ -15,6 +15,12 @@
     sans-serif;
   -webkit-font-smoothing: antialiased;
 }
+.rt-model .rt-model-center { border-color: color-mix(in srgb, var(--rt-provider-accent) 62%, transparent); background: radial-gradient(circle at 45% 35%, color-mix(in srgb, var(--rt-provider-accent) 31%, #10202c), #0c1720 64%, #0b111a); }
+.rt-model .rt-model-orbit { border-color: color-mix(in srgb, var(--rt-provider-accent) 45%, transparent); }
+.rt-model[data-core-state="error"] { --rt-provider-accent: #ff6f7b !important; }
+.rt-model[data-core-state="compacting"], .rt-model[data-core-state="compacted"], .rt-model[data-core-state="warning"] { --rt-provider-accent: #f4cd77 !important; }
+.rt-model[data-core-state="error"] .rt-model-center { border-color: #ff6f7b !important; background: radial-gradient(circle, #602a35, #21141a) !important; }
+.rt-model[data-core-state="compacting"] .rt-model-center, .rt-model[data-core-state="warning"] .rt-model-center { border-color: #f4cd77 !important; background: radial-gradient(circle, #574326, #201b14) !important; }
 .cp-app * {
   box-sizing: border-box;
 }
@@ -971,6 +977,7 @@
   color: #96a4c6;
   font-size: 11px;
 }
+.rt-model-provenance { position: absolute; bottom: -32px; width: max-content; max-width: 200px; overflow: hidden; color: #8ba3c0; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .rt-model-decision {
   margin: 29px auto 15px;
   display: flex;
@@ -2529,6 +2536,8 @@
   border-radius: 10px;
   background: linear-gradient(110deg, #182940a0, #131e3490);
 }
+.mx-session-overview:has(.mx-session-usage-note) { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.mx-session-usage-note small { display: block; margin-top: 10px; line-height: 1.45; }
 .cp-3d-link { color: #c8baff !important; border-color: #a38aff44 !important; }
 .rt-map { position: relative; }
 .rt-particle-field { position: absolute; inset: 0; z-index: 8; width: 100%; height: 100%; pointer-events: none; mix-blend-mode: screen; }
@@ -3115,6 +3124,7 @@
   .mx-session-overview {
     grid-template-columns: 1fr 1fr;
   }
+  .mx-session-overview:has(.mx-session-usage-note) { grid-template-columns: 1fr 1fr; }
   .mx-session-overview > div {
     border-bottom: 1px solid #8db7df25;
   }

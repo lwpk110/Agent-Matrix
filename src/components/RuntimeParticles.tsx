@@ -1,6 +1,6 @@
 import { useEffect, useRef, type RefObject } from "react";
 import type { MockRuntimeEvent } from "./codexRuntimeMock";
-import { runtimeFlow } from "./runtimeFlow";
+import { runtimeFlow, type RuntimeFlow } from "./runtimeFlow";
 
 type Point = { x: number; y: number };
 type Anchor = Point & { left: number; right: number; top: number; bottom: number };
@@ -25,12 +25,12 @@ function rounded(points: Point[]) {
 }
 
 /** Routed energy packets: quiet conduits, a luminous head, and a short fading tail. */
-export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 900, replaying = false, liveMode = false }: {
-  host: RefObject<HTMLElement | null>; playing: boolean; activeEvent?: MockRuntimeEvent; eventDuration?: number; replaying?: boolean; liveMode?: boolean;
+export function RuntimeParticles({ host, playing, activeEvent, activeFlow, visualKey, flowActive = true, eventDuration = 900, replaying = false, liveMode = false }: {
+  host: RefObject<HTMLElement | null>; playing: boolean; activeEvent?: MockRuntimeEvent; activeFlow?: RuntimeFlow; visualKey?: string; flowActive?: boolean; eventDuration?: number; replaying?: boolean; liveMode?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const live = useRef({ playing, activeEvent, eventDuration, replaying, liveMode });
-  live.current = { playing, activeEvent, eventDuration, replaying, liveMode };
+  const live = useRef({ playing, activeEvent, activeFlow, visualKey, flowActive, eventDuration, replaying, liveMode });
+  live.current = { playing, activeEvent, activeFlow, visualKey, flowActive, eventDuration, replaying, liveMode };
   useEffect(() => {
     const element = host.current, surface = canvas.current, ctx = surface?.getContext("2d");
     if (!element || !surface || !ctx) return;
@@ -144,29 +144,29 @@ export function RuntimeParticles({ host, playing, activeEvent, eventDuration = 9
       if (now - previous < 30) return;
       const dt = previous ? Math.min((now - previous) / 1000, 0.06) : 0; previous = now;
       const state = live.current;
-      const eventKey = state.activeEvent ? `${state.activeEvent.id}:${state.activeEvent.status}` : undefined;
+      const eventKey = state.visualKey ?? (state.activeEvent ? `${state.activeEvent.id}:${state.activeEvent.status}` : undefined);
       if (eventId !== eventKey) { eventId = eventKey; eventAge = 0; dirty = true; }
       const moving = state.playing && !media.matches;
       if (!moving && !dirty) return;
       if (moving) { elapsed += dt; eventAge += dt; } dirty = false;
       ctx!.clearRect(0, 0, width, height); ctx!.lineCap = "round"; ctx!.lineJoin = "round";
-      const flow = runtimeFlow(state.activeEvent), idleStep = elapsed / 1.85;
+      const flow = state.activeFlow ?? runtimeFlow(state.activeEvent), idleStep = elapsed / 1.85;
       let drewActiveRoute = false;
       traces.forEach((trace, index) => {
         ctx!.beginPath(); trace.points.forEach((p, i) => i ? ctx!.lineTo(p.x, p.y) : ctx!.moveTo(p.x, p.y));
         ctx!.lineWidth = 1; ctx!.strokeStyle = trace.color; ctx!.globalAlpha = 0.19; ctx!.shadowBlur = 0; ctx!.stroke();
         const group = index < 3 ? [0, 3] : index < 8 ? [3, 5] : [8, traces.length - 8];
         const idleAge = idleStep + group[0] * 0.23;
-        const active = flow
+        const active = flow && state.flowActive
           ? trace.from === flow.from && trace.to === flow.to
           : !state.liveMode && !state.replaying && group[0] + Math.floor(idleAge) % group[1] === index;
         if (!active) return;
-        const section = flow ? (eventAge / Math.max(0.42, state.eventDuration / 1000)) % 1 : idleAge % 1;
+        const section = flow ? Math.min(1, eventAge / Math.max(0.42, state.eventDuration / 1000)) : idleAge % 1;
         if (section >= 0 && section <= 1) { drawPacket(trace, section); if (flow) drewActiveRoute = true; }
       });
-      if (flow && !drewActiveRoute) {
+      if (flow && state.flowActive && !drewActiveRoute) {
         const route = routeFor(flow.from, flow.to);
-        const section = (eventAge / Math.max(0.42, state.eventDuration / 1000)) % 1;
+        const section = Math.min(1, eventAge / Math.max(0.42, state.eventDuration / 1000));
         if (route) drawPacket(route, section);
       }
       ctx!.globalAlpha = 1; ctx!.shadowBlur = 0;

@@ -1,10 +1,11 @@
-import type { MockRuntimeEvent, MockNodeId } from "./codexRuntimeMock";
+import type { RuntimeEvent, RuntimeNodeId } from "../types/runtime";
 
-export type RuntimeFlow = { from: MockNodeId; to: MockNodeId };
+export type RuntimeFlow = { from: RuntimeNodeId; to: RuntimeNodeId };
 
 /** Visualize observable transfers; waiting and lifecycle-only records have no traffic. */
-export function runtimeFlow(event?: MockRuntimeEvent): RuntimeFlow | undefined {
+export function runtimeFlow(event?: RuntimeEvent): RuntimeFlow | undefined {
   if (!event || event.status === "waiting" || event.status === "failed") return;
+  if (event.flow) return event.flow;
   if (event.name === "UserPromptSubmit") return { from: "input", to: "context" };
   if (event.name === "context.snapshot") return { from: "context", to: "prompt" };
   if (event.name === "model.request") return { from: "prompt", to: "model" };
