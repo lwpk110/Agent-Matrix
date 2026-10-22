@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Activity, AlertCircle, ArrowUpRight, BookOpen, CheckCheck, Folder, GitBranch, Globe, Layers3, MessageSquare, Network, Search, ShieldCheck, Sparkles, Terminal, X, Zap } from "lucide-react";
-import type { MockNodeId, MockRuntimeEvent, MockRuntimeSession } from "./codexRuntimeMock";
+import type { RuntimeNodeId, RuntimeEvent, RuntimeSession } from "../types/runtime";
 import { leafStatusLabels, runtimeLeaves, type RuntimeLeaf } from "./runtimeLeafModel";
 import "./RuntimeLeafTopology.css";
 
@@ -9,17 +9,17 @@ const icons = { browser: Globe, layers: Layers3, book: BookOpen, check: CheckChe
 const categories = {
   input: ["用户输入", MessageSquare, "输入内容"], context: ["上下文", Layers3, "上下文组成"],
   prompt: ["提示词", Sparkles, "消息组成"], skill: ["Skill", BookOpen, "技能目录"],
-  model: ["Codex", Activity, "模型请求"], hook: ["Hook", Zap, "生命周期事件"],
+  model: ["模型", Activity, "模型请求"], hook: ["Hook", Zap, "生命周期事件"],
   gate: ["权限门禁", ShieldCheck, "策略与审批"], tool: ["本地工具", Terminal, "工具调用"],
   mcp: ["MCP", Network, "服务目录"], search: ["搜索", Search, "检索记录"], output: ["返回结果", CheckCheck, "输出内容"],
 } as const;
 
-export type LeafPreviewAnchor = { id: MockNodeId; left: number; right: number; top: number; bottom: number };
+export type LeafPreviewAnchor = { id: RuntimeNodeId; left: number; right: number; top: number; bottom: number };
 
 export function RuntimeLeafTopology({ anchor, session, events, onKeep, onLeave, onClose, onInspect, playing }: {
   anchor: LeafPreviewAnchor;
-  session: MockRuntimeSession;
-  events: MockRuntimeEvent[];
+  session: RuntimeSession;
+  events: RuntimeEvent[];
   onKeep: () => void;
   onLeave: () => void;
   onClose: () => void;
@@ -98,11 +98,11 @@ export function RuntimeLeafTopology({ anchor, session, events, onKeep, onLeave, 
           </button>
         </> : <>
           <div><strong>本轮未观测到{title}条目</strong><span className="rlp-status is-waiting"><i />无事件记录</span></div>
-          <p>此处只展示 Codex Hook / app-server 实际提供的事件，不以原型目录补齐当前会话。</p>
+          <p>此处只展示当前 Agent 实际提供的事件，不以原型目录补齐当前会话。</p>
           <button type="button" disabled>暂无本轮执行证据<ArrowUpRight size={13} /></button>
         </>}
       </div>
-      <footer><span><i />{session.isReal ? "LIVE · Codex Runtime" : "MOCK · 原型示例"}</span><span>悬浮叶子查看摘要 · Esc 收起</span></footer>
+      <footer><span><i />{session.isReal ? `LIVE · ${session.provider ?? "Agent"} Runtime` : "MOCK · 原型示例"}</span><span>悬浮叶子查看摘要 · Esc 收起</span></footer>
     </section>, document.body,
   );
 }

@@ -14,6 +14,8 @@ import fs from 'fs';
 import { CodexRuntimeEvent, correlateCodexRuntimeEvent, isLoopbackAddress, normalizeCodexHookPayload, reconcileCodexRuntimeHistory } from './src/services/codexRuntime';
 import { ClaudeRuntimeEvent, correlateClaudeRuntimeEvent, normalizeClaudeHookPayload, reconcileClaudeRuntimeHistory } from './src/services/claudeRuntime';
 import { mergeClaudeRuntimeSettings } from './src/services/claudeSettings';
+import { findClaudeSessionCwd, findClaudeTelemetry, readClaudeDesktopOnlyTelemetry, readClaudeDesktopTelemetry, readClaudeProjectMemoryMetadata } from './src/services/claudeDesktopTelemetry';
+import { isTrustedClaudeTelemetryOrigin } from './src/services/claudeTelemetryAccess';
 import { CodexAppServerMonitor } from './src/services/codexAppServer';
 import { readCodexRolloutTelemetry } from './src/services/codexRolloutTelemetry';
 import { readCodexSkillSources } from './src/services/codexSkillSources';
@@ -22,6 +24,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+const OBSERVATORY_PORT = Number(process.env.PORT) || 3000;
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -504,6 +507,30 @@ app.get('/api/real/claude-events', (req, res) => {
   res.json({ events: claudeEventsHistory, retained: claudeEventsHistory.length, journaled: true });
 });
 
+function isSameOriginLocalRequest(req: express.Request) {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return false;
+  return isTrustedClaudeTelemetryOrigin({ host: req.get('host'), origin: req.get('origin'), port: OBSERVATORY_PORT });
+}
+
+app.get('/api/real/claude-telemetry', (req, res) => {
+  if (!isSameOriginLocalRequest(req)) return res.status(403).json({ error: 'Claude telemetry is restricted to the local observatory origin' });
+  const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId.slice(0, 160) : '';
+  const turnId = typeof req.query.turnId === 'string' ? req.query.turnId.slice(0, 160) : '';
+  let telemetry = findClaudeTelemetry(readClaudeDesktopTelemetry(), sessionId, turnId, claudeEventsHistory);
+  const cwd = findClaudeSessionCwd(sessionId, claudeEventsHistory);
+  if (!telemetry && cwd && turnId && claudeEventsHistory.some(event => event.sessionId === sessionId && event.turnId === turnId)) telemetry = { sessionId, turnId };
+  if (telemetry) telemetry.memoryMetadata = cwd ? readClaudeProjectMemoryMetadata({ cwd }) : { status: 'unavailable', fileCount: 0, totalBytes: 0, latestModifiedAt: null };
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ telemetry });
+});
+
+app.get('/api/real/claude-desktop-telemetry', (req, res) => {
+  if (!isSameOriginLocalRequest(req)) return res.status(403).json({ error: 'Claude telemetry is restricted to the local observatory origin' });
+  const snapshot = readClaudeDesktopOnlyTelemetry();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(snapshot);
+});
+
 app.get('/api/real/codex-rollout', async (req, res) => {
   if (!isLoopbackAddress(req.socket.remoteAddress)) {
     return res.status(403).json({ error: 'Codex telemetry is restricted to localhost' });
@@ -598,9 +625,8 @@ async function start() {
     });
   }
 
-  const PORT = Number(process.env.PORT) || 3000;
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`\x1b[1;36m⚡ AGENT MATRIX Server running on http://0.0.0.0:${PORT}\x1b[0m`);
+  server.listen(OBSERVATORY_PORT, '0.0.0.0', () => {
+    console.log(`\x1b[1;36m⚡ AGENT MATRIX Server running on http://0.0.0.0:${OBSERVATORY_PORT}\x1b[0m`);
   });
 
   // Keep the existing Claude gateway port and use a separate Codex hook port.

@@ -22,7 +22,6 @@ test("MCP results flow back into the model, while starts flow out of the gate", 
   assert.deepEqual(runtimeFlow(start), { from: "gate", to: "mcp" });
   assert.deepEqual(runtimeFlow(finish), { from: "mcp", to: "model" });
 });
-
 test("real Codex runtime events animate only their observed transfer direction", () => {
   const base = events[0];
   const observed = (name: string, node: typeof base.node, status: typeof base.status) => ({ ...base, name, node, status });

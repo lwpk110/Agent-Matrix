@@ -31,11 +31,14 @@ import { AgentBlackBoxMonitor } from "./components/AgentBlackBoxMonitor";
 import { AgentDynamicFlowHero } from "./components/AgentDynamicFlowHero";
 import { MultiSessionFleetGrid } from "./components/MultiSessionFleetGrid";
 import { Agent3dArchitectureTopology } from "./components/Agent3dArchitectureTopology";
-import { CodexRuntimePage } from "./components/CodexRuntimePage";
 import { CodexSessionPrototype } from "./components/CodexSessionPrototype";
+import { CodexMark } from "./components/CodexMark";
+import { ClaudeMark } from "./components/ClaudeMark";
 import { Codex3DTopology } from "./components/codex3d/Codex3DTopology";
+import { RuntimeObservatoryRoute } from "./components/RuntimeObservatoryRoute";
 import { telemetryBus } from "./services/websocket";
-import { appendRuntimeLog, pairRuntimeLogs } from "./services/runtimeLogBuffer";
+import { appendRuntimeLog, pairRuntimeLogs, rememberRuntimeEventIdentity } from "./services/runtimeLogBuffer";
+import { findRuntimePluginByPath } from "./services/runtimePlugins";
 import { soundFx } from "./utils/audio";
 import { generate60mHistory } from "./utils/finOpsHistory";
 import { BlackBoxStage } from "./types/matrix";
@@ -66,6 +69,7 @@ export default function App() {
     useState<BlackBoxStage>();
   const seenCodexEventIds = useRef(new Set<string>());
   const [codexHistoryLoaded, setCodexHistoryLoaded] = useState(false);
+  const [codexHistoryError, setCodexHistoryError] = useState(false);
   const [claudeHistoryLoaded, setClaudeHistoryLoaded] = useState(false);
   const [claudeHistoryError, setClaudeHistoryError] = useState(false);
 
@@ -579,8 +583,9 @@ export default function App() {
           telemetryBus.dispatchLocalEvent({ type: "codex_runtime", payload });
         });
         setCodexHistoryLoaded(true);
+        setCodexHistoryError(false);
       })
-      .catch(() => setCodexHistoryLoaded(true));
+      .catch(() => { setCodexHistoryLoaded(true); setCodexHistoryError(true); });
     telemetryBus.fetchClaudeRuntimeEvents()
       .then(({ events }) => {
         events.forEach((payload) => telemetryBus.dispatchLocalEvent({ type: "claude_runtime", payload }));
@@ -701,7 +706,7 @@ export default function App() {
       } else if (event.type === "codex_runtime" || event.type === "claude_runtime") {
         const runtimeEvent = event.payload as {
           provider: "codex" | "claude";
-          source: "codex-hook" | "codex-app-server" | "claude-hook";
+          source: "codex-hook" | "codex-app-server" | "claude-hook" | "claude-desktop";
           eventId?: string;
           hookEventName: string;
           sessionId?: string;
@@ -709,6 +714,7 @@ export default function App() {
           toolUseId?: string;
           cwd?: string;
           model?: string;
+          reasoningEffort?: string;
           permissionMode?: string;
           agentId?: string;
           agentType?: string;
@@ -729,20 +735,8 @@ export default function App() {
           payload: Record<string, unknown>;
         };
         const { hookEventName, toolName, sessionId, payload } = runtimeEvent;
-        if (
-          runtimeEvent.eventId &&
-          seenCodexEventIds.current.has(runtimeEvent.eventId)
-        )
+        if (!rememberRuntimeEventIdentity(seenCodexEventIds.current, runtimeEvent))
           return;
-        if (runtimeEvent.eventId) {
-          seenCodexEventIds.current.add(runtimeEvent.eventId);
-          if (seenCodexEventIds.current.size > 5000) {
-            const oldestEventId = seenCodexEventIds.current
-              .values()
-              .next().value;
-            if (oldestEventId) seenCodexEventIds.current.delete(oldestEventId);
-          }
-        }
         if (
           (runtimeEvent.phase === "started" ||
             runtimeEvent.phase === "completed") &&
@@ -853,6 +847,7 @@ export default function App() {
               toolUseId: runtimeEvent.toolUseId,
               cwd: runtimeEvent.cwd,
               model: runtimeEvent.model,
+              reasoningEffort: runtimeEvent.reasoningEffort,
               permissionMode: runtimeEvent.permissionMode,
               agentId: runtimeEvent.agentId,
               agentType: runtimeEvent.agentType,
@@ -1652,59 +1647,10 @@ export default function App() {
     activeSession.activeFile,
   ]);
 
-  if (["/codex", "/codex/prototype"].includes(window.location.pathname)) {
-    return <CodexSessionPrototype logs={logs} connectionState={wsState} realStatus={realStatus} />;
-  }
-
-  if (window.location.pathname === "/codex/3d") {
-    return <Codex3DTopology logs={logs} />;
-  }
-
-  if (window.location.pathname === "/codex/runtime") {
-    return (
-      <CodexRuntimePage
-        language={language}
-        connectionState={wsState}
-        hookGatewayState={realStatus?.codexHookGatewayState || "starting"}
-        appServerState={realStatus?.codexAppServerState || "starting"}
-        historyLoaded={codexHistoryLoaded}
-        logs={logs}
-        onBack={() => {
-          window.location.href = "/";
-        }}
-        onClear={async () => {
-          const response = await fetch("/api/real/codex-events", {
-            method: "DELETE",
-          });
-          if (!response.ok)
-            throw new Error("Could not clear Codex runtime events");
-          setLogs((current) => current.filter((log) => log.runtimeEvent?.provider !== "codex"));
-        }}
-      />
-    );
-  }
-
-  if (window.location.pathname === "/claude/runtime") {
-    return (
-      <CodexRuntimePage
-        language={language}
-        connectionState={wsState}
-        hookGatewayState={realStatus?.claudeHookGatewayState || "starting"}
-        hookPort={realStatus?.claudeHookPort}
-        appServerState="offline"
-        historyLoaded={claudeHistoryLoaded}
-        historyError={claudeHistoryError}
-        logs={logs}
-        provider="claude"
-        onBack={() => { window.location.href = "/"; }}
-        onClear={async () => {
-          const response = await fetch("/api/real/claude-events", { method: "DELETE" });
-          if (!response.ok) throw new Error("Could not clear Claude runtime events");
-          setLogs((current) => current.filter((log) => log.runtimeEvent?.provider !== "claude"));
-        }}
-      />
-    );
-  }
+  if (window.location.pathname === "/codex/prototype") return <CodexSessionPrototype prototypeMode logs={logs} connectionState={wsState} realStatus={realStatus} />;
+  if (window.location.pathname === "/codex/prototype/3d") return <Codex3DTopology prototypeMode logs={logs} />;
+  const runtimeRoute = <RuntimeObservatoryRoute pathname={window.location.pathname} logs={logs} realStatus={realStatus} connectionState={wsState} historyByProvider={{ codex: { loaded: codexHistoryLoaded, error: codexHistoryError }, claude: { loaded: claudeHistoryLoaded, error: claudeHistoryError } }} language={language} onBack={() => { window.location.href = "/"; }} onClear={async (provider) => { const plugin = findRuntimePluginByPath(window.location.pathname); if (plugin?.provider === provider && plugin.clearRuntime) await plugin.clearRuntime(); setLogs((current) => current.filter((log) => log.runtimeEvent?.provider !== provider)); }} />;
+  if (findRuntimePluginByPath(window.location.pathname) || window.location.pathname === "/claude/desktop") return runtimeRoute;
 
   return (
     <div className="min-h-screen bg-[#06070a] text-slate-200 flex flex-col font-mono selection:bg-purple-900/60 selection:text-purple-200">
@@ -1806,17 +1752,24 @@ export default function App() {
               href="/codex"
               className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 bg-emerald-950 text-emerald-200 border border-emerald-800 hover:border-emerald-400"
             >
-              <span>⌘</span>
+              <CodexMark width={15} height={15} />
               <span>
                 {language === "zh" ? "Codex 工作台" : "Codex Runtime"}
               </span>
             </a>
             <a
-              href="/claude/runtime"
+              href="/claude"
               className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 bg-amber-950/60 text-amber-200 border border-amber-800 hover:border-amber-400"
             >
-              <span>◆</span>
-              <span>{language === "zh" ? "Claude 运行时" : "Claude Runtime"}</span>
+              <ClaudeMark width={15} height={15} style={{color: '#D97757'}} />
+              <span>{language === "zh" ? "Claude 观测站" : "Claude Observatory"}</span>
+            </a>
+            <a
+              href="/claude/3d"
+              className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1.5 bg-amber-950/30 text-amber-200 border border-amber-900 hover:border-amber-400"
+            >
+              <ClaudeMark width={15} height={15} style={{color: '#D97757'}} />
+              <span>{language === "zh" ? "Claude 3D" : "Claude 3D"}</span>
             </a>
             <button
               onClick={() => {

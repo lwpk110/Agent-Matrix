@@ -1,4 +1,6 @@
 import type { MockNodeId } from "../codexRuntimeMock";
+import { CLAUDE_MARK_PATH } from "../ClaudeMark";
+import { CODEX_MARK_PATH } from "../CodexMark";
 
 export interface RuntimeNode {
   id: MockNodeId;
@@ -10,6 +12,11 @@ export interface RuntimeNode {
   summary: string;
   glyph: string[];
 }
+/** 运行时核心以 provider 着色；错误和告警状态由渲染层覆盖此基础色。 */
+export function providerCoreColor(provider: string) {
+  return provider === 'claude' ? '#D97757' : '#e8e8e8';
+}
+export function coreGlyph(icon: 'activity' | 'sparkles' | 'claude-mark' | 'codex-mark') { return icon === 'claude-mark' ? [CLAUDE_MARK_PATH] : icon === 'codex-mark' ? [CODEX_MARK_PATH] : icon === 'sparkles' ? ["M12 2l2.2 7.8L22 12l-7.8 2.2L12 22l-2.2-7.8L2 12l7.8-2.2Z"] : ["m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3Z", "M21 2v5M18.5 4.5h5"]; }
 export const RUNTIME_NODES: RuntimeNode[] = [
   {
     id: "input",
@@ -61,7 +68,7 @@ export const RUNTIME_NODES: RuntimeNode[] = [
   },
   {
     id: "model",
-    title: "Codex 模型",
+    title: "Agent 模型",
     code: "MODEL CORE",
     color: "#b6b3ff",
     position: [0, 3.4, 0],

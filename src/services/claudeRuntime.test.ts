@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { correlateClaudeRuntimeEvent, normalizeClaudeHookPayload } from './claudeRuntime';
+import { correlateClaudeRuntimeEvent, normalizeClaudeHookPayload, reconcileClaudeRuntimeHistory } from './claudeRuntime';
 
 test('规范化 Claude Code 官方 Hook 生命周期并隔离私有字段', () => {
   const event = normalizeClaudeHookPayload({
@@ -47,6 +47,23 @@ test('按会话和 tool_use_id 关联 Claude 工具调用', () => {
 
 test('不接受缺少官方 Hook 名称的 Claude 数据', () => {
   assert.equal(normalizeClaudeHookPayload({ session_id: 'a' }), null);
+});
+
+test('标准化顶层及嵌套 effort，并将 SessionStart model 回填给同会话回合', () => {
+  const session = normalizeClaudeHookPayload({ hook_event_name: 'SessionStart', session_id: 'session-a', model: 'claude-opus', effort: 'high' });
+  const prompt = normalizeClaudeHookPayload({ hook_event_name: 'UserPromptSubmit', session_id: 'session-a', hook_specific_output: { effort: 'medium' } });
+  assert.ok(session && prompt);
+  const history = [session];
+  const correlated = correlateClaudeRuntimeEvent(prompt, history);
+  assert.equal(correlated.model, 'claude-opus');
+  assert.equal(correlated.reasoningEffort, 'medium');
+});
+
+test('支持对象形式 effort，并为旧 journal 载荷回填 effort', () => {
+  const event = normalizeClaudeHookPayload({ hook_event_name: 'SessionStart', session_id: 'object-effort', effort: { level: 'high' } });
+  assert.equal(event?.reasoningEffort, 'high');
+  const replayed = reconcileClaudeRuntimeHistory([{ ...event!, reasoningEffort: undefined, payload: { ...event!.payload, effort: { level: 'medium' } } }]);
+  assert.equal(replayed[0]?.reasoningEffort, 'medium');
 });
 
 test('采集官方可见的失败和子代理生命周期字段，不采 transcript 或私有推理', () => {

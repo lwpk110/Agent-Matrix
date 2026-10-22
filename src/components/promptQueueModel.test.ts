@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { LogEntry } from "../types/matrix";
-import { promptTraces } from "./promptQueueModel";
+import { promptObservations, promptTraces } from "./promptQueueModel";
 
 function log(id: string, eventName: string, turnId: string, phase: NonNullable<LogEntry["runtimeEvent"]>["phase"], payload: Record<string, unknown>): LogEntry {
   return {
@@ -56,4 +56,22 @@ test("merges matching Hook and app-server prompt reports within the same turn", 
   assert.equal(traces.length, 1);
   assert.equal(traces[0].prompt, "Same prompt");
   assert.equal(traces[0].status, "received");
+});
+
+test("filters a shared session and turn by provider", () => {
+  const codex = log("7", "UserPromptSubmit", "turn-a", "prompt", { prompt: "Codex prompt" });
+  const claude = log("8", "UserPromptSubmit", "turn-a", "prompt", { prompt: "Claude prompt" });
+  claude.runtimeEvent = { ...claude.runtimeEvent!, provider: "claude", source: "claude-hook" };
+  assert.deepEqual(promptTraces([codex, claude], "session-a", "turn-a", "codex").map(trace => trace.prompt), ["Codex prompt"]);
+});
+
+test("projects Claude prompt lifecycle metadata without retaining prompt content", () => {
+  const submitted = log("metadata-prompt", "UserPromptSubmit", "turn-a", "prompt", { prompt: "不得展示的提示词正文" });
+  submitted.runtimeEvent = { ...submitted.runtimeEvent!, provider: "claude", source: "claude-hook" };
+  submitted.timestamp = "2026-10-21T10:00:00.000Z";
+  const completed = log("metadata-stop", "Stop", "turn-a", "completed", {});
+  completed.runtimeEvent = { ...completed.runtimeEvent!, provider: "claude", source: "claude-hook" };
+  const observations = promptObservations([submitted, completed], "session-a", "turn-a", "claude");
+  assert.deepEqual(observations, [{ id: "metadata-prompt", turnId: "turn-a", timestamp: "2026-10-21T10:00:00.000Z", status: "completed", evidence: "UserPromptSubmit -> Stop" }]);
+  assert.doesNotMatch(JSON.stringify(observations), /不得展示的提示词正文/);
 });

@@ -2,6 +2,7 @@
  * Events use a product-level schema; these are not captured Codex wire messages.
  */
 import type { CodexRolloutTelemetry } from "../types/codexTelemetry";
+import type { RuntimeNodeId, RuntimeSession } from "../types/runtime";
 
 export type MockNodeId =
   | "input"
@@ -33,13 +34,15 @@ export interface MockRuntimeEvent {
   kind: MockKind;
   node: MockNodeId;
   relatedNodes: MockNodeId[];
-  source: "App Server" | "Hook" | "策略快照" | "上下文快照" | "演示用户" | "Codex App Server" | "Codex Hook";
+  source: string;
   title: string;
   summary: string;
   status: MockStatus;
   callId?: string;
   roundId?: string;
   durationMs?: number;
+  observedIntervalMs?: number;
+  isReal?: boolean;
   hasToolResponse?: boolean;
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
@@ -835,15 +838,15 @@ export type MockRuntimeSession = Omit<ReturnType<typeof createCodexRuntimeMock>,
   rolloutTelemetry?: CodexRolloutTelemetry | null;
 };
 export function mockEventsForNode(
-  session: MockRuntimeSession,
-  node: MockNodeId,
+  session: RuntimeSession,
+  node: RuntimeNodeId,
 ) {
   return session.events.filter(
     (event) => event.node === node || event.relatedNodes.includes(node),
   );
 }
 
-export function mockEventsForCall(session: MockRuntimeSession, callId: string) {
+export function mockEventsForCall(session: RuntimeSession, callId: string) {
   return session.events.filter(
     (event) =>
       event.callId === callId ||

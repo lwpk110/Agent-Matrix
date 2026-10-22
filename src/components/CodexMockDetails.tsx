@@ -13,14 +13,12 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import "./CodexMockDetails.css";
-import {
-  mockEventsForNode,
-  type MockNodeId,
-  type MockRuntimeEvent,
-  type MockRuntimeSession,
-} from "./codexRuntimeMock";
+import { mockEventsForNode } from "./codexRuntimeMock";
+import type { RuntimeEvent, RuntimeNodeId, RuntimeSession } from "../types/runtime";
+import { getRuntimePlugin } from "../services/runtimePlugins";
+import { runtimeCallNode } from "./runtimeLeafModel";
 
-export const statusLabels: Record<MockRuntimeEvent["status"], string> = {
+export const statusLabels: Record<RuntimeEvent["status"], string> = {
   completed: "已完成",
   running: "开始执行",
   waiting: "等待确认",
@@ -136,7 +134,7 @@ function DataBlock({ label, value, tone = "neutral", raw = false }: {
   );
 }
 
-export function ModelIdentity({ session }: { session: MockRuntimeSession }) {
+export function ModelIdentity({ session }: { session: RuntimeSession }) {
   return (
     <div className="mx-model-identity" aria-label={session.isReal ? "实时模型配置" : "模拟模型配置"}>
       <span className="mx-model-chip">
@@ -150,7 +148,7 @@ export function ModelIdentity({ session }: { session: MockRuntimeSession }) {
   );
 }
 
-function callResultSummary(call: MockRuntimeSession["calls"][number]) {
+function callResultSummary(call: RuntimeSession["calls"][number]) {
   if (call.status === "running") return "调用仍在执行，尚未收到完成事件。";
   if (call.status === "waiting") return "调用正在等待权限决定。";
   if (call.status === "unknown") return "事件未包含可确认的执行状态。";
@@ -182,7 +180,7 @@ export function MockEventCard({
   highlight,
   onCorrelate,
 }: {
-  event: MockRuntimeEvent;
+  event: RuntimeEvent;
   highlight?: boolean;
   onCorrelate: (id: string) => void;
 }) {
@@ -194,7 +192,7 @@ export function MockEventCard({
     >
       <div className="mx-meta">
         <time>{event.time}</time>
-        <span>{event.source}{event.source.startsWith("Codex ") ? "" : " · 模拟"}</span>
+        <span>{event.source}{event.isReal ? "" : " · 模拟"}</span>
         <span className={`mx-status mx-${event.status}`}>
           {statusLabels[event.status]}
         </span>
@@ -225,7 +223,7 @@ export function MockEventCard({
           {raw ? "收起原始 JSON" : "原始事件 JSON"}
         </button>
       </div>
-      {raw && <DataBlock label={`${event.source.startsWith("Codex ") ? "RUNTIME" : "MOCK"} EVENT · 完整记录`} value={event} raw />}
+      {raw && <DataBlock label={`${event.isReal ? "RUNTIME" : "MOCK"} EVENT · 完整记录`} value={event} raw />}
     </article>
   );
 }
@@ -234,14 +232,14 @@ function CallCard({
   call,
   onCorrelate,
 }: {
-  call: MockRuntimeSession["calls"][number];
+  call: RuntimeSession["calls"][number];
   onCorrelate: (id: string) => void;
 }) {
   return (
     <article className={`mx-call-card mx-card-${call.status}`}>
       <div className="mx-meta">
         <span className={`mx-kind-tag mx-kind-${call.type}`}>{call.type === "local" ? <Terminal size={12} /> : <PlugZap size={12} />}{call.type === "local" ? "本地工具" : "MCP 工具"}</span>
-        {call.durationMs !== undefined && <span>{call.durationMs} ms</span>}
+        <span>{call.durationMs === null ? "耗时未采集" : `${call.durationMs} ms`}</span>
         <span className={`mx-status mx-${call.status}`}>
           {statusLabels[call.status]}
         </span>
@@ -267,12 +265,12 @@ function CallCard({
           <p>{callResultSummary(call)}</p>
         </div>
       </div>
-      <details className="mx-disclosure">
+      {call.metadataOnly ? <p className="mx-call-note">来源：Claude transcript 统计 · {call.resultReceived ? call.resultError === true ? "已收到失败结果标记" : "已收到结果标记" : "结果未观测"}{call.observedAt ? ` · ${new Date(call.observedAt).toLocaleString("zh-CN", { hour12: false })}` : ""}。不采集参数或结果正文。</p> : <details className="mx-disclosure">
         <summary>查看参数与完整结果 <span>输入 → 执行 → 输出</span></summary>
         <DataBlock label="01 · 发送的参数" value={call.arguments} tone="input" />
         <ArrowDown className="mx-data-arrow" size={15} />
         <DataBlock label="02 · 调用结果" value={call.resultReceived === false ? null : Object.keys(call.result).length ? call.result : "Hook 标记已返回；结果载荷未采集。"} tone="output" />
-      </details>
+      </details>}
       <button className="mx-link-button" onClick={() => onCorrelate(call.id)}>
         <Link2 size={13} />
         追踪这次调用的完整链路
@@ -282,7 +280,7 @@ function CallCard({
   );
 }
 
-function RuntimeStats({ events, calls }: { events: MockRuntimeEvent[]; calls: MockRuntimeSession["calls"] }) {
+function RuntimeStats({ events, calls }: { events: RuntimeEvent[]; calls: RuntimeSession["calls"] }) {
   const names = calls.length
     ? new Set(calls.map((call) => call.name.trim().toLocaleLowerCase()))
     : new Set(events.map((event) => event.name));
@@ -309,7 +307,7 @@ function RuntimeStats({ events, calls }: { events: MockRuntimeEvent[]; calls: Mo
 }
 
 type SkillSource = {
-  scope: "project" | "global";
+  scope: "project" | "global" | "runtime";
   root: string;
   path: string;
   modifiedAt: string;
@@ -319,20 +317,20 @@ type SkillSource = {
   content: string;
 };
 
-function SkillSourceDetails({ name, cwd }: { name: string; cwd: string }) {
+function SkillSourceDetails({ name, cwd, provider }: { name: string; cwd: string; provider?: string }) {
   const [sources, setSources] = useState<SkillSource[]>([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    let active = true;
-    const query = new URLSearchParams({ name, cwd });
+    let active = true; const controller = new AbortController();
+    const loader = provider ? getRuntimePlugin(provider).loadSkillSources : undefined;
+    if (!loader) { setSources([]); setLoading(false); return () => controller.abort(); }
     setLoading(true);
-    fetch(`/api/real/codex-skill?${query}`, { cache: "no-store" })
-      .then((response) => response.ok ? response.json() as Promise<{ sources: SkillSource[] }> : Promise.reject(new Error("Skill 文件查询失败")))
-      .then((result) => { if (active) setSources(result.sources); })
+    loader(name, cwd, controller.signal)
+      .then((result) => { if (active) setSources(result); })
       .catch(() => { if (active) setSources([]); })
       .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [name, cwd]);
+    return () => { active = false; controller.abort(); };
+  }, [name, cwd, provider]);
 
   return <section className="mx-skill-sources" aria-label={`${name} 的来源文件`}>
     <div className="mx-skill-sources-heading"><strong>Skill 原始文件</strong><span>{loading ? "正在查找…" : `${sources.length} 个匹配来源`}</span></div>
@@ -358,7 +356,7 @@ function SkillSourceDetails({ name, cwd }: { name: string; cwd: string }) {
   </section>;
 }
 
-export function downloadMockSession(session: MockRuntimeSession) {
+export function downloadMockSession(session: RuntimeSession) {
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(session, null, 2)], { type: "application/json" }),
   );
@@ -374,14 +372,14 @@ export function CodexMockDetails({
   node,
   onCorrelate,
 }: {
-  session: MockRuntimeSession;
-  node: MockNodeId;
+  session: RuntimeSession;
+  node: RuntimeNodeId;
   onCorrelate: (id: string) => void;
 }) {
   if (session.isReal) return <LiveRuntimeDetails session={session} node={node} onCorrelate={onCorrelate} />;
   const events = mockEventsForNode(session, node);
   const find = (name: string) => events.find((event) => event.name === name);
-  const eventView = (event: MockRuntimeEvent | undefined) =>
+  const eventView = (event: RuntimeEvent | undefined) =>
     event && (
       <MockEventCard key={event.id} event={event} onCorrelate={onCorrelate} />
     );
@@ -394,7 +392,7 @@ export function CodexMockDetails({
           ? ["call_files_01", "call_docs_04"].includes(call.id)
           : false,
   );
-  const summaries: Record<MockNodeId, string> = {
+  const summaries: Record<RuntimeNodeId, string> = {
     input: `用户输入：${session.prompt}`,
     context: "初始上下文包含工作区、用户约束、工具定义和演示回答偏好；项目记忆按需读取，执行结果逐轮追加。本轮未触发上下文压缩。",
     prompt: "本轮组合演示指令、用户消息、上下文引用与能力定义，后续随工具返回值补充材料。",
@@ -652,15 +650,19 @@ function LiveRuntimeDetails({
   node,
   onCorrelate,
 }: {
-  session: MockRuntimeSession;
-  node: MockNodeId;
+  session: RuntimeSession;
+  node: RuntimeNodeId;
   onCorrelate: (id: string) => void;
 }) {
   const events = mockEventsForNode(session, node);
   const nodeCallIds = new Set(events.filter((event) => event.callId).map((event) => event.callId));
-  const calls = session.calls.filter((call) => nodeCallIds.has(call.id));
+  const calls = session.calls.filter((call) => nodeCallIds.has(call.id) || (call.metadataOnly && runtimeCallNode(call) === node));
+  const context = session.rolloutTelemetry?.contextMetadata;
+  const prompt = session.rolloutTelemetry?.promptMetadata;
+  const metadataNode = session.provider === "claude" && (node === "context" || node === "prompt");
+  const snapshotOrigin = (metadata: { scope: 'turn' | 'session'; observedAt: string | null }) => `Claude transcript · ${metadata.scope === 'session' ? '会话快照（沿父链继承）' : '本回合快照'} · ${metadata.observedAt ? new Date(metadata.observedAt).toLocaleString('zh-CN', { hour12: false }) : '时间未采集'}`;
   const tokens = (value: number | null) => value === null ? "未采集" : value.toLocaleString();
-  const summary = `${events.length} 条关联事件${calls.length ? ` · ${calls.length} 次关联调用` : ""}。详情仅呈现 Codex Hook / app-server 已观测字段。`;
+  const summary = `${events.length} 条关联事件${calls.length ? ` · ${calls.length} 次关联调用` : ""}。详情仅呈现当前 Agent 已观测字段。`;
   const modelRequestCount = session.rolloutTelemetry?.modelRequestCount ?? (session.rounds.length || null);
   return (
     <div className="mx-node-details">
@@ -678,6 +680,14 @@ function LiveRuntimeDetails({
         <DataBlock label="捕获到的用户输入" value={session.prompt || null} />
         <DataBlock label="运行环境字段" value={{ cwd: session.cwd, session_id: session.id, turn_id: session.turnId }} />
       </>}
+      {node === "context" && context && <>
+        <div className="mx-stat-grid"><span>规则快照文件<b>{context.instructionFileCount ?? "未采集"}</b></span></div>
+        <p className="mx-note">{snapshotOrigin(context)}。仅采集条目数量，不代表独立文件去重或已载入内容。</p>
+      </>}
+      {node === "prompt" && prompt && <>
+        <div className="mx-stat-grid"><span>系统指令分段<b>{prompt.systemSegmentCount ?? "未采集"}</b></span><span>工具定义条目<b>{prompt.toolDefinitionCount ?? "未采集"}</b></span></div>
+        <p className="mx-note">{snapshotOrigin(prompt)}。仅采集结构统计，不展示提示词或工具定义正文。</p>
+      </>}
       {node === "model" && <>
         <div className="mx-stat-grid">
           <span>模型请求<b>{modelRequestCount ?? "未采集"}</b></span>
@@ -691,11 +701,12 @@ function LiveRuntimeDetails({
           <DataBlock label="可见响应字段" value={round.response || null} />
         </article>)}
       </>}
-      {node === "skill" && [...new Set(events.filter((event) => event.name === "SkillActivated").map((event) => String(event.input?.skillName || event.title.split(" · ").at(-1) || "")))].filter(Boolean).map((name) => <SkillSourceDetails key={name} name={name} cwd={session.cwd} />)}
+      {node === "skill" && session.capabilities?.skills && [...new Set(events.filter((event) => event.name === "SkillActivated").map((event) => String(event.input?.skillName || event.title.split(" · ").at(-1) || "")))].filter(Boolean).map((name) => <SkillSourceDetails key={name} name={name} cwd={session.cwd} provider={session.provider} />)}
+      {node === "skill" && !session.capabilities?.skills && <p className="mx-note">当前 Agent 未提供可读取的 Skill 文件来源；仅展示已观测到的生命周期事件。</p>}
       {(node === "tool" || node === "mcp" || node === "search") && calls.map((call) => <CallCard key={call.id} call={call} onCorrelate={onCorrelate} />)}
       {node === "output" && <DataBlock label="采集到的最终回答" value={session.finalAnswer || null} />}
-      {events.length > 0 ? events.map((event) => <MockEventCard key={event.id} event={event} onCorrelate={onCorrelate} />)
-        : <p className="mx-empty">当前会话没有采集到此节点的事件。</p>}
+      {metadataNode ? <p className="mx-note">仅展示统计元数据，未采集正文。</p> : events.length > 0 ? events.map((event) => <MockEventCard key={event.id} event={event} onCorrelate={onCorrelate} />)
+        : !calls.length && <p className="mx-empty">当前会话没有采集到此节点的事件。</p>}
     </div>
   );
 }

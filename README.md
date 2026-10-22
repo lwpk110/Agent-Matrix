@@ -1,112 +1,94 @@
-# ⚡ AGENT MATRIX · NEURAL TREE
-### 生产级 AI 智能体运行时控制平面与安全审计网关 (Production-Grade Agent Control Plane)
+# Agent Matrix · Neural Tree
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
-[![React](https://img.shields.io/badge/React-19.x-cyan.svg)](https://react.dev/)
-[![Node.js](https://img.shields.io/badge/Node.js-20.x-green.svg)](https://nodejs.org/)
-[![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007acc.svg)](https://code.visualstudio.com/)
-[![TailwindCSS](https://img.shields.io/badge/Tailwind-4.x-38bdf8.svg)](https://tailwindcss.com/)
-[![License](https://img.shields.io/badge/License-Apache%202.0-purple.svg)](LICENSE)
+面向 Codex 与 Claude Code 的本地运行时观测站。通过 Hook、Codex app-server 和本机统计元数据，将会话、模型请求、工具调用、权限及结果关联到 2D / 3D 拓扑。
 
----
+基于 TypeScript、React、Vite、Express、WebSocket 和 Three.js。
 
-## 🌟 项目简介 (Overview)
+## 动态原型
 
-**AGENT MATRIX · NEURAL TREE** 是一套专为 **Claude Code**（Opus / Sonnet / Haiku）与 **OpenAI Codex**（o3-pro / Codex-1 / Codex-Mini）多智能体工作流打造的**纯黑赛博朋克极简终端 HUD 看板与生产级安全审计控制平面**。
+![Agent Matrix 运行时观测站原型](docs/assets/agent-matrix-prototype.gif)
 
-针对工程师体验进行了极致优化：
-- **零 Python 依赖 (Zero-Python)**：无需安装 Python、pip、FastAPI 或 Uvicorn，全部采用纯 TypeScript / Node.js 实现。
-- **VS Code / Cursor 原生插件 (One-Click Extension)**：随编辑器启动在后台无缝拉起 7788 网关，状态栏常驻指示灯，并支持在 IDE 内部直接分屏唤起暗黑控制看板。
-- **内嵌统一网关服务 (`server.ts`)**：执行 `npm run dev` 即可同时启动 Web HUD 看板与 7788 安全拦截总线，零额外操作。
+上图来自 `/codex/prototype` 的虚构演示会话，展示运行链路与光流效果；不包含真实本地会话数据。原型中的审批、记忆、容量和费用等示例不能视为已实现的真实 Agent 控制能力。
 
----
+## 快速启动
 
-## 🎯 4 大生产级核心特性 (Production-Grade Features)
+需要 Node.js 20 或更新版本。
 
-### 1. 原生 IDE 插件与实时 WebSocket 遥测总线
-- **VS Code / Cursor 原生插件 (`vscode-extension/`)**: 随 IDE 启动自动启动网关服务，状态栏常驻 `$(shield) ⚡ Agent Matrix: Online [7788]`。
-- **双向联动总线**: 自动握手 `ws://localhost:7788/ws` 接收 Claude Code `PreToolUse` / `PostToolUse` 与 Codex CLI 事件。
-- **智能平滑降级**: 本地未启动网关时自动转入**实时仿真演练模式 (Simulation Mode)**，后台自带退避探针心跳探测，顶部状态灯直观显示 `LIVE / PROBING / SIMULATION`。
-
-### 2. 高危操作热熔断与人工审批网关 (HITL Gatekeeper)
-- **智能熔断策略**: 实时匹配高危路径（如 `auth.ts`、`k8s/prod-secrets.yaml`、数据库迁移或风险值 $Risk \ge 2.0\%$）。
-- **节点热挂起**: 命中高危时自动冻结智能体执行流，相关拓扑节点进入红黄交替霓虹脉冲的 `[等待审批 / BLOCKED]` 状态。
-- **IDE 弹窗与控制面板双重审批**:
-  - **IDE 原生通知**: VS Code 右下角弹窗一键 `[Approve]` / `[Rollback]`。
-  - **Opus 战略审计抽屉**: 高亮 Diff 对比，支持【批准放行】、【拒绝回滚】、【注入修正指令】。
-
-### 3. 多会话并发集群 (Multi-Session Fleet) 与 FinOps 监控
-- **预置 3 大真实生产工作区**:
-  1. `#1 auth-oauth-refactor`: OAuth2 零信任安全重构，分支 `feat/neural-auth`。
-  2. `#2 k8s-cnpg-scaling`: CloudNative-PG 伸缩与调度，触碰机密 `k8s/prod-secrets.yaml`。
-  3. `#3 doris-sql-opt`: Apache Doris 分布式查询与物化视图性能调优。
-- **实时 FinOps 指标栏**: Token 燃烧速率 ($/min)、上下文水位线 (91.2%)、AST 圈复杂度增量 ($\Delta M$)、死循环防击穿熔断计数。
-
-### 4. 一键免配置与原生插件集成
-- 顶部常驻 **【⚡ 接入本地 Claude/Codex】** 模态框：
-  - **VS Code / Cursor 插件指南**: 一键加载与调试。
-  - **1 行终端自动配置命令**: 自动写入 `.claude/settings.json`。
-  - **免 Python 纯 TypeScript 网关源码**: 内置 Node.js 高可用实现。
-
----
-
-## 🚀 极简快速启动 (Quick Start - Zero Python!)
-
-### 方式 1：一键启动完整控制平面 (包含内嵌 7788 网关)
 ```bash
-# 1. 安装依赖
 npm install
-
-# 2. 启动服务 (同时启动 Web HUD 看板与 7788 安全网关！)
 npm run dev
 ```
-> 在浏览器打开 `http://localhost:3000` 即可访问看板，且本地网关已自动就绪！
 
----
+打开 <http://localhost:3000>。主服务默认监听 3000；内嵌 Claude 和 Codex Hook 网关分别使用本机回环端口 7788、7789。真实运行页没有事件时显示等待状态，模拟演示通过独立路由进入。
 
-### 方式 2：作为 VS Code / Cursor 插件启动
+| 页面 | 路径 |
+| --- | --- |
+| Codex 2D 观测站 | `/codex` |
+| Codex 3D 拓扑 | `/codex/3d` |
+| Codex 会话链路 | `/codex/runtime` |
+| Claude Code 2D 观测站 | `/claude` |
+| Claude Code 3D 拓扑 | `/claude/3d` |
+| Claude Code 会话链路 | `/claude/runtime` |
+| Claude Desktop 本地统计 | `/claude/desktop` |
+| 2D / 3D 演示原型 | `/codex/prototype`、`/codex/prototype/3d` |
+
+## 接入真实运行时
+
+### Claude Code
+
+在本项目根目录执行：
+
 ```bash
-cd vscode-extension
-npm install
-# 在 VS Code 中按 F5 启动 Extension Development Host
+npm run configure:claude-runtime
 ```
-> VS Code 启动后状态栏将出现 `⚡ Agent Matrix: Online [7788]`，点击即可在侧边栏分屏打开控制平面！
 
----
+脚本幂等合并项目 `.claude/settings.json`，保留已有配置与 Hook。已有 JSON 无法解析时拒绝覆盖。command Hook 将提示提交、工具前后、失败、权限、压缩、子代理及停止等生命周期事件发送到 `127.0.0.1:7788/hook/claude`。
 
-### 方式 3：为 Claude Code 安全合并运行时观测 Hook
-在项目根目录执行：
+本地 transcript 统计补充模型、推理档位、Token、请求数、明确记录的回合时长、规则快照文件条目数、系统指令分段数、工具定义数及工具调用状态。统计按 session、用户回合和父链关联；工具调用按 ID 合并，快照标明本回合或会话继承来源。
+
+统计读取器仅保留元数据，不缓存或返回 transcript 提示词、回答、规则正文、原始路径、工具参数、工具结果或 schema。已有 Hook 链路可展示脱敏后的用户输入与最终答复；二者的数据边界不同。设置 `CLAUDE_DESKTOP_TELEMETRY_DISABLED=1` 可关闭本地 transcript 统计读取。
+
+### Codex
+
+仓库 `.codex/hooks.json` 配置官方生命周期 Hook。启动服务后，在 Codex 中运行 `/hooks`，审核并信任 `Agent Matrix local Codex runtime telemetry`。信任后才会向 `127.0.0.1:7789` 上报事件。
+
+Codex Hook 与 app-server 适配器补充会话、回合、工具、权限和结果证据；本地 rollout 用量用于资源统计。托管搜索及其他能力是否可见取决于实际接入的数据源，不会用演示事件补齐。
+
+### Claude Desktop
+
+`/claude/desktop` 仅展示本地日志中明确标为 `claude-desktop-3p` 的统计，和 Code 来源分开处理。普通 Desktop Chat 没有受支持记录时保持未接入，不推断已采集。
+
+## 观测能力与边界
+
+- **共享观测站**：Codex、Claude 与后续 Agent 通过插件声明路由、事件映射、遥测加载和品牌视觉，共用 2D / 3D、资源面板和详情组件。
+- **真实用量**：展示当前回合 Token、缓存分项、实际请求数和最近一次请求输入；最近输入与累计用量分开统计。
+- **元数据来源**：规则、提示词结构和工具结果标记可由 transcript 补充；实际调用与可用工具定义数分别统计。
+- **未知值保留**：无可靠来源的窗口容量、推理 Token、排队深度、重试次数或 Skill 正文不按 0 或模型名称推算。
+- **记忆统计**：当前项目 memory 文件数量、大小和更新时间只说明文件存在，不代表已载入模型或实际使用。
+- **事件与动效**：新增证据进入有限视觉队列，优先展示输入、快照与请求阶段；密集工具动效会合并省略，完整记录保留在事件轨迹。光流单次播放，首次打开不自动回放历史。快照与请求统计触发的提示标为统计派生，不代表已捕获内部执行过程。纯生命周期事件不自动代表内部上下文组装或成功工具执行。
+- **本地隐私**：真实事件接口限制本机访问；统计接口校验本地 Host / Origin。隐藏推理与凭据不进入展示。
+
+脱敏 Hook 历史保存在 `.codex/runtime-events.jsonl`、`.claude/runtime-events.jsonl`，重启后可恢复；这些日志已被 Git 忽略。Hook 前后采样间隔不等于工具实际执行时长。
+
+## 开发与验证
+
 ```bash
-node --import tsx scripts/configure-claude-runtime.mjs
+npm run lint
+npm run build
+npm run test:claude-runtime
+npm run test:codex-runtime
+npm run test:codex-prototype
+npm run test:runtime-observation
+npm run test:runtime-views
 ```
 
-脚本按 Claude Code 官方 command Hook 结构，采集 `SessionStart`、提示提交、工具前后、失败、权限、压缩、子代理和停止事件，并通过本机 `127.0.0.1:7788/hook/claude` 上报。它会保留原有 settings、保留旧 `PreToolUse` / `PostToolUse` HITL 命令、幂等合并本项目 Hook；已有 JSON 无法解析时拒绝覆盖。打开 `/claude/runtime` 查看独立的会话链路。Claude journal 仅保留最近 2,000 条脱敏事件，使用 `.claude/runtime-events.jsonl` 持久化，重启后会经 REST/本机 WebSocket 重放。不会采集 transcript、隐藏系统上下文、私有推理或工具响应正文；工具前后显示的是 Hook 观测间隔，不是执行时长。
+VS Code / Cursor 扩展位于 `vscode-extension/`，使用方式见其 [README](vscode-extension/README.md)。
 
-### 方式 4：查看 Codex CLI 真实运行事件
+相关设计：
 
-本仓库的 `.codex/hooks.json` 配置 Codex 官方生命周期 Hook。启动控制台后，在 Codex 中运行 `/hooks`，审核并信任 `Agent Matrix local Codex runtime telemetry`；Codex 只会在信任后向本地 `127.0.0.1:7789` 网关上报事件。Hook 覆盖提示提交、工具调用前后、权限请求、子 Agent、压缩与回合生命周期。
+- [Claude 运行时与元数据边界](docs/design/claude-runtime.md)
+- [共享观测站插件接口](docs/design/runtime-observatory-plugins.md)
 
-打开 `/codex` 工作台查看实时事件、会话/回合关联和脱敏详情。事件只通过本机回环接口传输，不广播给局域网看板客户端，服务端会为重连中的本地看板保留最近 500 条事件，并将脱敏事件追加到 `.codex/runtime-events.jsonl` 以便服务重启后恢复。MCP 及其他本地工具调用会按 Hook 实际上报展示；Codex 托管的 `WebSearch` 不经过本地工具 Hook，当前不会被采集。Skills 也没有独立的激活事件，只有 Hook 可见的明确技能元数据才会出现。Codex 不提供完整组装后的隐藏系统上下文或模型私有推理链；这些细节不会伪装成实时数据。
+## 许可证
 
----
-
-## ⌨️ 控制台交互命令行 (CLI Cheatsheet)
-
-在看板底部的终端命令行（`~/agent-tree $`）中可直接输入指令：
-| 指令 | 说明 |
-| :--- | :--- |
-| `approve` | 人工批准放行当前挂起的工具调用 |
-| `rollback` | 拒绝并回滚当前补丁至安全快照 |
-| `prompt <约束内容>` | 向挂起的 Agent 注入修正提示词并重新推理 |
-| `inject [bash\|edit\|grep\|ast]` | 注入模拟的工具调用事件 |
-| `session [1\|2\|3]` | 切换多会话并发集群工作区 |
-| `alert` | 立即触发高危操作热熔断演练 |
-| `mode [claude\|codex\|hybrid]` | 切换底层 AI 智能体模型矩阵栈 |
-| `lang [zh\|en]` | 切换中英文系统语言 |
-| `clear` | 清空当前会话日志流缓冲区 |
-
----
-
-## 📄 授权协议 (License)
-
-Apache License 2.0.
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)。第三方图标归属见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
