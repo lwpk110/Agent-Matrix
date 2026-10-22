@@ -41,6 +41,7 @@ import { createRuntimeSessionFromLogs, getRuntimeConnection, getRuntimePlugin, l
 import type { RuntimeEvent } from "../types/runtime";
 import { createEmptyRuntimeSession, useRuntimeTelemetry } from "../services/runtimeObservation";
 import { RuntimeEmptyState } from "./RuntimeEmptyState";
+import { RuntimeFleetPrototype } from "./RuntimeFleetPrototype";
 import { codexCoreStatus } from "./codexCoreStatus";
 import "./RuntimeObservatory.css";
 import {
@@ -290,6 +291,7 @@ export function CodexSessionPrototype({
   const [progress, setProgress] = useState(Infinity);
   const [draft, setDraft] = useState(MOCK_USER_PROMPT);
   const [submitted, setSubmitted] = useState(MOCK_USER_PROMPT);
+  const [selectedFleetSession, setSelectedFleetSession] = useState("session-codex");
   const plugin = getRuntimePlugin(provider);
   const runtimeConnection = getRuntimeConnection(plugin, realStatus);
   const runtimeOffline = runtimeConnection.hookGatewayState === "offline" || runtimeConnection.appServerState === "offline";
@@ -297,7 +299,20 @@ export function CodexSessionPrototype({
   const observedLiveSession = useMemo(() => prototypeMode ? null : createRuntimeSessionFromLogs(plugin, logs), [logs, plugin, prototypeMode]);
   const liveTelemetry = useRuntimeTelemetry(plugin, observedLiveSession);
   const liveSession = useMemo(() => prototypeMode ? null : createRuntimeSessionFromLogs(plugin, logs, liveTelemetry), [logs, liveTelemetry, plugin, prototypeMode]);
-  const demoSession = useMemo(() => prototypeMode ? createCodexRuntimeMock(submitted) : null, [prototypeMode, submitted]);
+  const demoSession = useMemo(() => {
+    if (!prototypeMode) return null;
+    const demo = createCodexRuntimeMock(submitted);
+    const scenario = selectedFleetSession === "session-codex"
+      ? { id: "session-codex", turnId: "turn-a940", prompt: submitted, model: "GPT-5.4", tokens: 8420 }
+      : selectedFleetSession === "session-active"
+        ? { id: "session-active", turnId: "turn-7c21", prompt: "梳理 Agent-Matrix 的模块边界并验证观测链路。", model: "claude-sonnet-5", tokens: 15196 }
+        : selectedFleetSession === "session-review"
+          ? { id: "session-review", turnId: "turn-1b93", prompt: "复核变更风险并汇总待确认事项。", model: "claude-opus-4", tokens: 22480 }
+          : selectedFleetSession === "session-failed"
+            ? { id: "session-failed", turnId: "turn-08fd", prompt: "检查运行时事件网关状态。", model: "GPT-5.4", tokens: 0 }
+            : { id: "session-done", turnId: "turn-72e1", prompt: "盘点项目依赖并总结运行状态。", model: "claude-sonnet-5", tokens: 38210 };
+    return { ...demo, id: scenario.id, turnId: scenario.turnId, prompt: scenario.prompt, model: scenario.model, usage: { ...demo.usage, inputTokens: scenario.tokens } };
+  }, [prototypeMode, submitted, selectedFleetSession]);
   const emptyState = historyError ? "error" : connectionState === "offline" || runtimeOffline ? "offline" : "waiting";
   const session = liveSession || demoSession || createEmptyRuntimeSession(plugin.provider, emptyState);
   const liveMode = Boolean(liveSession);
@@ -561,7 +576,7 @@ export function CodexSessionPrototype({
 
   return (
     <div
-      className={`cp-app cp-runtime-prototype ${playing ? "rt-motion-on" : "rt-motion-off"}`}
+      className={`cp-app cp-runtime-prototype ${prototypeMode ? "rt-fleet-prototype" : ""} ${playing ? "rt-motion-on" : "rt-motion-off"}`}
       data-runtime-provider={plugin.provider}
     >
       <header className="cp-header" inert={Boolean(selected)}>
@@ -594,7 +609,8 @@ export function CodexSessionPrototype({
         </div>
       </header>
       <div className="cp-shell" inert={Boolean(selected)}>
-        <aside className="cp-sidebar">
+        {prototypeMode && <RuntimeFleetPrototype selectedId={selectedFleetSession} onSelect={setSelectedFleetSession} />}
+        <aside className="cp-sidebar" aria-label="当前会话运行阶段">
           <div className="cp-workspace">
             <span className="cp-project-icon">
               {plugin.visual?.coreIcon === "claude-mark" ? <ClaudeMark className="rt-provider-mark rt-claude-mark" style={{ color: plugin.visual.accent }} /> : plugin.visual?.coreIcon === "codex-mark" ? <CodexMark className="rt-provider-mark rt-codex-mark" style={{ color: plugin.visual.accent }} /> : plugin.visual?.coreIcon === "sparkles" ? <Sparkles size={17} style={{ color: plugin.visual.accent }} /> : <Activity size={17} />}
@@ -621,7 +637,7 @@ export function CodexSessionPrototype({
             </div>
           </div>
           <div className="cp-side-label cp-plan-label">
-            探索运行时 <span>{nodes.length} 个节点</span>
+            当前会话阶段 <span>{nodes.length} 个节点</span>
           </div>
           <nav className="cp-step-nav" aria-label="运行时步骤">
             {nodes.map((step, index) => {
