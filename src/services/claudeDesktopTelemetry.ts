@@ -36,7 +36,7 @@ function usageFrom(value: unknown): Usage | null {
   const usage = { inputTokens: numberField(source.input_tokens ?? source.inputTokens), cacheCreationTokens: numberField(source.cache_creation_input_tokens ?? source.cacheCreationInputTokens), cachedInputTokens: numberField(source.cache_read_input_tokens ?? source.cacheReadInputTokens ?? source.cached_input_tokens ?? source.cachedInputTokens), outputTokens: numberField(source.output_tokens ?? source.outputTokens), reasoningTokens: numberField(source.reasoning_output_tokens ?? source.reasoningTokens ?? outputDetails.thinking_tokens), totalTokens: numberField(source.total_tokens ?? source.totalTokens) };
   return Object.values(usage).some(value => value !== null) ? usage : null;
 }
-function sourceFrom(entrypoint: string | null): InternalSource { return entrypoint === 'claude-desktop-3p' ? 'claude-desktop' : entrypoint === 'cli' ? 'claude-code' : 'unknown'; }
+function sourceFrom(entrypoint: string | null): InternalSource { return entrypoint === 'claude-desktop-3p' ? 'claude-desktop' : entrypoint === 'cli' || entrypoint === 'sdk-cli' ? 'claude-code' : 'unknown'; }
 function hasUserInput(record: Record<string, unknown>, message: Record<string, unknown>) {
   if (record.isMeta === true || record.toolUseResult !== undefined || record.tool_result !== undefined) return false;
   const content = message.content;

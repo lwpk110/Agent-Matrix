@@ -11,12 +11,30 @@ const cache = join(process.cwd(), "node_modules/.cache/runtime-observatory-views
 async function loadViews() {
   rmSync(cache, { recursive: true, force: true }); mkdirSync(cache, { recursive: true });
   (globalThis as { window?: unknown }).window = { location: { search: "" } };
-  await build({ entryPoints: ["src/components/CodexSessionPrototype.tsx", "src/components/codex3d/Codex3DTopology.tsx", "src/components/CodexMockDetails.tsx"], outdir: cache, bundle: true, format: "esm", platform: "node", jsx: "automatic", external: ["react", "react-dom", "react-dom/*", "motion/react", "three", "three/*", "lucide-react"], loader: { ".css": "empty" } });
+  await build({ entryPoints: ["src/components/CodexSessionPrototype.tsx", "src/components/codex3d/Codex3DTopology.tsx", "src/components/CodexMockDetails.tsx", "src/components/RuntimeFleetPrototype.tsx", "src/components/RuntimeResources.tsx"], outdir: cache, bundle: true, format: "esm", platform: "node", jsx: "automatic", external: ["react", "react-dom", "react-dom/*", "motion/react", "three", "three/*", "lucide-react"], loader: { ".css": "empty" } });
   const two = await import(join(cache, "CodexSessionPrototype.js"));
   const three = await import(join(cache, "codex3d/Codex3DTopology.js"));
   const details = await import(join(cache, "CodexMockDetails.js"));
-  return { two, three, details };
+  const fleet = await import(join(cache, "RuntimeFleetPrototype.js"));
+  const resources = await import(join(cache, "RuntimeResources.js"));
+  return { two, three, details, fleet, resources };
 }
+
+test("runtime fleet prototype exposes searchable parallel sessions with status, model, activity and token fields", async () => {
+  try {
+    const { fleet } = await loadViews();
+    const html = renderToStaticMarkup(React.createElement(fleet.RuntimeFleetPrototype, { selectedId: "session-active", onSelect: () => {} }));
+    assert.match(html, /本地会话/);
+    assert.match(html, /正在运行/);
+    assert.match(html, /claude-sonnet-5/);
+    assert.match(html, /最近活动/);
+    assert.match(html, /15,196/);
+    assert.match(html, /turn-7c21/);
+    assert.match(html, /同一工作区 · workspace-alpha/);
+    assert.match(html, /历史会话/);
+    assert.match(html, /aria-pressed="true"/);
+  } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
+});
 
 async function loadRoute() {
   rmSync(cache, { recursive: true, force: true }); mkdirSync(cache, { recursive: true });
@@ -117,9 +135,36 @@ test("Claude visual uses request metadata language and cache-inclusive input wor
     assert.match(html, /Claude Code Runtime/);
     assert.match(html, /模型来自运行时事件/);
     assert.match(html, /输入合计包含原生输入、创建缓存和读取缓存/);
+    assert.match(html, /提示词监控/);
+    assert.match(html, /未采集/);
+    assert.equal(html.match(/rr-card rr-card-/g)?.length, 4);
     const model = await import(join(process.cwd(), "src/components/codex3d/model.ts"));
     assert.notDeepEqual(model.coreGlyph("activity"), model.coreGlyph("sparkles"));
     assert.ok(three.Codex3DTopology);
+  } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
+});
+
+test("原型资源概览使用与实时态一致的四张核心卡，并提供明确的提示词模拟入口", async () => {
+  try {
+    const { two } = await loadViews();
+    const html = renderToStaticMarkup(React.createElement(two.CodexSessionPrototype, { prototypeMode: true, logs: [] }));
+    assert.equal(html.match(/rr-card rr-card-/g)?.length, 4);
+    assert.match(html, /提示词监控/);
+    assert.match(html, /MOCK · 随事件回放/);
+  } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
+});
+
+test("实时资源概览不会将缺失的逐次 Token 回执渲染为零值柱", async () => {
+  try {
+    const { resources } = await loadViews();
+    const session = {
+      id: "live", provider: "claude", turnId: "turn", cwd: "未采集", prompt: "", model: "未采集", reasoningEffort: "未采集", instruction: "", skillText: "", skillCatalog: [], finalAnswer: "", calls: [], events: [],
+      rounds: [{ id: "partial", inputTokens: null, cachedInputTokens: null, outputTokens: 31, consumedCallIds: [], callIds: [], response: "" }],
+      usage: { inputTokens: null, outputTokens: 31, cachedInputTokens: null }, durationMs: null, schemaVersion: "agent-matrix.runtime.v1", isMock: false, isReal: true, dataSource: "live", capabilities: { rolloutTelemetry: true, promptTelemetry: false },
+    };
+    const html = renderToStaticMarkup(React.createElement(resources.RuntimeResources, { events: [], logs: [], session, onInspect: () => {}, onCorrelate: () => {} }));
+    assert.match(html, /rr-card-usage[\s\S]*is-unknown/);
+    assert.doesNotMatch(html, /height:0%/);
   } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
 });
 

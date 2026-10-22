@@ -29,6 +29,27 @@ test('按 user 边界和 parent tree 聚合 Claude Code，并只投影统计元�
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('识别当前 Claude CLI 的 sdk-cli 来源并提取统计元数据', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-metadata-'));
+  const project = path.join(root, 'project');
+  await fs.mkdir(project);
+  await fs.writeFile(path.join(project, 'session.jsonl'), [
+    { sessionId: 'sdk-session', uuid: 'sdk-user', type: 'user', entrypoint: 'sdk-cli', timestamp: '2026-10-22T02:54:17.312Z', message: { content: 'PRIVATE_PROMPT' } },
+    { sessionId: 'sdk-session', uuid: 'sdk-system', parentUuid: 'sdk-user', type: 'system', timestamp: '2026-10-22T02:54:17.400Z', instructions: { files: ['PRIVATE_PATH'] } },
+    { sessionId: 'sdk-session', uuid: 'sdk-snapshot', parentUuid: 'sdk-system', type: 'system', timestamp: '2026-10-22T02:54:17.500Z', attachment: { type: 'prompt_snapshot', systemPrompt: ['PRIVATE_SYSTEM'], tools: [{ name: 'PRIVATE_TOOL' }] } },
+    { sessionId: 'sdk-session', uuid: 'sdk-assistant', parentUuid: 'sdk-snapshot', type: 'assistant', timestamp: '2026-10-22T02:54:18.000Z', message: { id: 'sdk-request', model: 'claude-sonnet-5', usage: { input_tokens: 4991, cache_creation_input_tokens: 10205, cache_read_input_tokens: 0, output_tokens: 84 } } },
+  ].map(line).join(''));
+  try {
+    const telemetry = readClaudeDesktopTelemetry({ root }).sessions[0];
+    assert.equal(telemetry?.source, 'claude-code');
+    assert.equal(telemetry?.model, 'claude-sonnet-5');
+    assert.equal(telemetry?.modelRequestCount, 1);
+    assert.deepEqual(telemetry?.contextMetadata?.instructionFileCount, 1);
+    assert.deepEqual(telemetry?.promptMetadata && [telemetry.promptMetadata.systemSegmentCount, telemetry.promptMetadata.toolDefinitionCount], [1, 1]);
+    assert.doesNotMatch(JSON.stringify(telemetry), /PRIVATE_/);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test('仅将能由 Hook prompt id 或时间可靠匹配的 Hook 回合映射到 transcript user 边界', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-metadata-'));
   const project = path.join(root, 'project'); await fs.mkdir(project);
