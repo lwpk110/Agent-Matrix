@@ -180,7 +180,17 @@ function aggregate(nodes: Node[]): ClaudeTelemetrySession[] {
       state.model = node.model ?? state.model; state.effort = node.effort ?? state.effort;
     }
     for (const [turnId, state] of turns) {
-      const requests = [...state.requests.values()].map(request => request.usage);
+      const requestRecords = [...state.requests.values()].sort((left, right) => (left.timestamp ?? '').localeCompare(right.timestamp ?? ''));
+      const requests = requestRecords.map(request => request.usage);
+      const requestUsage = requestRecords.slice(-20).map(({ usage }) => {
+        const hasCompleteInput = usage?.inputTokens !== null && usage?.inputTokens !== undefined && usage.cacheCreationTokens !== null && usage.cacheCreationTokens !== undefined && usage.cachedInputTokens !== null && usage.cachedInputTokens !== undefined;
+        return {
+          inputTokens: hasCompleteInput ? usage.inputTokens! + usage.cacheCreationTokens! + usage.cachedInputTokens! : null,
+          cachedInputTokens: usage?.cacheCreationTokens !== null && usage?.cacheCreationTokens !== undefined && usage.cachedInputTokens !== null && usage.cachedInputTokens !== undefined ? usage.cacheCreationTokens + usage.cachedInputTokens : null,
+          outputTokens: usage?.outputTokens ?? null,
+          reasoningTokens: usage?.reasoningTokens ?? null,
+        };
+      });
       const hasMissingUsage = requests.some(usage => usage === null);
       const usages = requests.filter((usage): usage is Usage => usage !== null);
       const sum = (key: keyof Usage) => usages.some(usage => usage[key] === null) ? null : usages.reduce((total, usage) => total + usage[key]!, 0);
@@ -210,7 +220,7 @@ function aggregate(nodes: Node[]): ClaudeTelemetrySession[] {
           toolCalls.set(result.callId, { ...call, resultObserved: true, isError: terminalError ? true : result.isError, observedAt: node.timestamp });
         }
       }
-      const item: ClaudeTelemetrySession = { source: state.source, sessionId, turnId, model: state.model, reasoningEffort: state.effort, modelRequestCount: state.requests.size || null, latestRequest: { inputTokens: latestInput }, contextMetadata: { instructionFileCount: instruction?.instructionFileCount ?? null, observedAt: instruction?.timestamp ?? null, source: 'claude-transcript', scope: scopeFor(instruction) }, promptMetadata: { systemSegmentCount: system?.systemSegmentCount ?? null, toolDefinitionCount: tools?.toolDefinitionCount ?? null, observedAt: system?.timestamp ?? tools?.timestamp ?? null, source: 'claude-transcript', scope: scopeFor(system) === 'session' || scopeFor(tools) === 'session' ? 'session' : 'turn' }, toolCallMetadata: [...toolCalls.values()], turnUsage: requests.length ? { inputTokens: inputComplete ? sum('inputTokens')! + sum('cacheCreationTokens')! + sum('cachedInputTokens')! : null, cachedInputTokens: hasMissingUsage ? null : sum('cachedInputTokens'), outputTokens: hasMissingUsage ? null : sum('outputTokens'), reasoningTokens: hasMissingUsage ? null : sum('reasoningTokens'), totalTokens: hasMissingUsage ? null : sum('totalTokens'), nativeInputTokens: hasMissingUsage ? null : sum('inputTokens'), cacheCreationInputTokens: hasMissingUsage ? null : sum('cacheCreationTokens'), cacheReadInputTokens: hasMissingUsage ? null : sum('cachedInputTokens'), usageSemantics: 'native-input-plus-cache-creation-plus-cache-read' } : null, durationMs: state.durationMs, timestamp: state.timestamp };
+      const item: ClaudeTelemetrySession = { source: state.source, sessionId, turnId, model: state.model, reasoningEffort: state.effort, modelRequestCount: state.requests.size || null, requests: requestUsage, latestRequest: { inputTokens: latestInput }, contextMetadata: { instructionFileCount: instruction?.instructionFileCount ?? null, observedAt: instruction?.timestamp ?? null, source: 'claude-transcript', scope: scopeFor(instruction) }, promptMetadata: { systemSegmentCount: system?.systemSegmentCount ?? null, toolDefinitionCount: tools?.toolDefinitionCount ?? null, observedAt: system?.timestamp ?? tools?.timestamp ?? null, source: 'claude-transcript', scope: scopeFor(system) === 'session' || scopeFor(tools) === 'session' ? 'session' : 'turn' }, toolCallMetadata: [...toolCalls.values()], turnUsage: requests.length ? { inputTokens: inputComplete ? sum('inputTokens')! + sum('cacheCreationTokens')! + sum('cachedInputTokens')! : null, cachedInputTokens: hasMissingUsage ? null : sum('cachedInputTokens'), outputTokens: hasMissingUsage ? null : sum('outputTokens'), reasoningTokens: hasMissingUsage ? null : sum('reasoningTokens'), totalTokens: hasMissingUsage ? null : sum('totalTokens'), nativeInputTokens: hasMissingUsage ? null : sum('inputTokens'), cacheCreationInputTokens: hasMissingUsage ? null : sum('cacheCreationTokens'), cacheReadInputTokens: hasMissingUsage ? null : sum('cachedInputTokens'), usageSemantics: 'native-input-plus-cache-creation-plus-cache-read' } : null, durationMs: state.durationMs, timestamp: state.timestamp };
       // 仅供同进程 Hook 关联，非枚举属性不会跨 REST 边界泄露。
       Object.defineProperty(item, '_promptId', { value: state.promptId, enumerable: false });
       output.push(item);
@@ -295,5 +305,5 @@ export function findClaudeTelemetry(snapshot: ClaudeTelemetrySnapshot, sessionId
   const event = history.filter(item => item.sessionId === sessionId && item.turnId === turnId && item.hookEventName === 'UserPromptSubmit').at(-1); if (!event) return null;
   const candidates = snapshot.sessions.filter(item => item.sessionId === sessionId), id = promptId(event);
   const matched = id ? candidates.find(item => (item as ClaudeTelemetrySession & { _promptId?: string })._promptId === id) : (() => { const time = Date.parse(event.timestamp ?? ''); if (!Number.isFinite(time)) return null; const nearby = candidates.filter(item => { const candidateTime = Date.parse(item.timestamp ?? ''); return Number.isFinite(candidateTime) && Math.abs(candidateTime - time) <= 90_000; }); return nearby.length === 1 ? nearby[0] : null; })();
-  return matched ? { sessionId, turnId, model: matched.model, reasoningEffort: matched.reasoningEffort, modelRequestCount: matched.modelRequestCount, latestRequest: matched.latestRequest, contextMetadata: matched.contextMetadata, promptMetadata: matched.promptMetadata, toolCallMetadata: matched.toolCallMetadata, turnUsage: matched.turnUsage, ...(matched.durationMs === null ? {} : { durationMs: matched.durationMs }) } : null;
+  return matched ? { sessionId, turnId, model: matched.model, reasoningEffort: matched.reasoningEffort, modelRequestCount: matched.modelRequestCount, requests: matched.requests, latestRequest: matched.latestRequest, contextMetadata: matched.contextMetadata, promptMetadata: matched.promptMetadata, toolCallMetadata: matched.toolCallMetadata, turnUsage: matched.turnUsage, ...(matched.durationMs === null ? {} : { durationMs: matched.durationMs }) } : null;
 }

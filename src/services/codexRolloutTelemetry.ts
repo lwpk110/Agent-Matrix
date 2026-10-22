@@ -9,6 +9,7 @@ type Turn = {
   model: string | null;
   reasoningEffort: string | null;
   responseIds: Set<string>;
+  requests: Map<string, RequestUsage>;
   usage: Usage | null;
   latestRequest: RequestUsage | null;
   contextWindowTokens: number | null;
@@ -23,6 +24,7 @@ type FileCache = { offset: number; state: RolloutState };
 
 const cache = new Map<string, FileCache>();
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
+const MAX_REQUEST_USAGE_SAMPLES = 20;
 
 function numberField(record: Record<string, unknown>, ...keys: string[]): number | null {
   for (const key of keys) {
@@ -67,7 +69,7 @@ function requestUsageFrom(value: unknown): RequestUsage | null {
 }
 
 function emptyTurn(): Turn {
-  return { model: null, reasoningEffort: null, responseIds: new Set(), usage: null, latestRequest: null, contextWindowTokens: null };
+  return { model: null, reasoningEffort: null, responseIds: new Set(), requests: new Map(), usage: null, latestRequest: null, contextWindowTokens: null };
 }
 
 function ensureTurn(state: RolloutState, turnId: string): Turn {
@@ -115,7 +117,17 @@ function parseLine(line: string, state: RolloutState) {
     if (!turnId) return;
     const turn = ensureTurn(state, turnId);
     const responseId = stringField(payload, 'response_id');
-    if (responseId) turn.responseIds.add(responseId);
+    if (responseId) {
+      turn.responseIds.add(responseId);
+      const prior = turn.requests.get(responseId);
+      const requestUsage = requestUsageFrom(payload.usage);
+      turn.requests.set(responseId, {
+        inputTokens: requestUsage?.inputTokens ?? prior?.inputTokens ?? null,
+        cachedInputTokens: requestUsage?.cachedInputTokens ?? prior?.cachedInputTokens ?? null,
+        outputTokens: requestUsage?.outputTokens ?? prior?.outputTokens ?? null,
+        reasoningTokens: requestUsage?.reasoningTokens ?? prior?.reasoningTokens ?? null,
+      });
+    }
     turn.usage = usageFrom(payload.turn_token_usage) || usageFrom(payload.usage) || turn.usage;
     return;
   }
@@ -206,6 +218,7 @@ export async function readCodexRolloutTelemetry(
     model: turn.model,
     reasoningEffort: turn.reasoningEffort,
     modelRequestCount: turn.responseIds.size || null,
+    requests: [...turn.requests.values()].slice(-MAX_REQUEST_USAGE_SAMPLES),
     turnUsage: turn.usage,
     latestRequest: turn.latestRequest,
     contextWindowTokens: turn.contextWindowTokens,

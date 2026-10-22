@@ -15,10 +15,12 @@ import { CodexRuntimeEvent, correlateCodexRuntimeEvent, isLoopbackAddress, norma
 import { ClaudeRuntimeEvent, correlateClaudeRuntimeEvent, normalizeClaudeHookPayload, reconcileClaudeRuntimeHistory } from './src/services/claudeRuntime';
 import { mergeClaudeRuntimeSettings } from './src/services/claudeSettings';
 import { findClaudeSessionCwd, findClaudeTelemetry, readClaudeDesktopOnlyTelemetry, readClaudeDesktopTelemetry, readClaudeProjectMemoryMetadata } from './src/services/claudeDesktopTelemetry';
+import { readCodexMemoryFiles, readCodexMemoryMetadata } from './src/services/codexMemoryMetadata';
 import { isTrustedClaudeTelemetryOrigin } from './src/services/claudeTelemetryAccess';
 import { CodexAppServerMonitor } from './src/services/codexAppServer';
 import { readCodexRolloutTelemetry } from './src/services/codexRolloutTelemetry';
 import { readCodexSkillSources } from './src/services/codexSkillSources';
+import type { RuntimeTelemetry } from './src/types/runtime';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -541,12 +543,23 @@ app.get('/api/real/codex-rollout', async (req, res) => {
     return res.status(400).json({ error: 'A valid sessionId is required' });
   }
   try {
-    const telemetry = await readCodexRolloutTelemetry(sessionId, turnId);
+    const telemetry: RuntimeTelemetry = await readCodexRolloutTelemetry(sessionId, turnId) ?? { sessionId, turnId };
+    const cwd = [...codexEventsHistory].reverse().find(event => event.sessionId === sessionId && typeof event.cwd === 'string' && path.isAbsolute(event.cwd))?.cwd;
+    telemetry.memoryMetadata = readCodexMemoryMetadata({ cwd });
     res.setHeader('Cache-Control', 'no-store');
     res.json({ telemetry });
   } catch {
     res.status(200).json({ telemetry: null });
   }
+});
+
+app.get('/api/real/codex-memory', (req, res) => {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) return res.status(403).json({ error: 'Codex memory is restricted to localhost' });
+  const sessionId = typeof req.query.sessionId === 'string' ? req.query.sessionId : '';
+  if (!sessionId || sessionId.length > 128) return res.status(400).json({ error: 'A valid sessionId is required' });
+  const cwd = [...codexEventsHistory].reverse().find(event => event.sessionId === sessionId && typeof event.cwd === 'string' && path.isAbsolute(event.cwd))?.cwd;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ files: readCodexMemoryFiles({ cwd }) });
 });
 
 app.get('/api/real/codex-skill', (req, res) => {

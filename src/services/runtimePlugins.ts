@@ -118,6 +118,21 @@ export function createRuntimeSessionFromLogs(plugin: RuntimeAgentPlugin, logs: L
   const projected = plugin.project ? plugin.project(logs, telemetry) : genericSession(plugin, logs, telemetry);
   return projected ? { ...projected, provider: plugin.provider, capabilities: plugin.capabilities } : null;
 }
+export function createRuntimeSessionsFromLogs(plugin: RuntimeAgentPlugin, logs: LogEntry[]): RuntimeSession[] {
+  const groups = new Map<string, LogEntry[]>();
+  for (const log of logs) {
+    if (!log.runtimeEvent || !plugin.accepts(log)) continue;
+    const sessionId = log.runtimeEvent.sessionId || "unknown-session";
+    const group = groups.get(sessionId) ?? [];
+    group.push(log);
+    groups.set(sessionId, group);
+  }
+  const latestTime = (group: LogEntry[]) => Math.max(...group.map(log => Date.parse(log.runtimeEvent?.timestamp || log.timestamp)).filter(Number.isFinite));
+  return [...groups.values()]
+    .sort((a, b) => latestTime(b) - latestTime(a))
+    .map(group => createRuntimeSessionFromLogs(plugin, group))
+    .filter((session): session is RuntimeSession => session !== null);
+}
 export function latestObservedRuntimeEvent(session: RuntimeSession, logs: LogEntry[]) { return session.events.find(event => event.id === [...logs].reverse().find(log => log.runtimeEvent?.provider === session.provider && log.runtimeEvent?.sessionId === session.id && (!log.runtimeEvent?.turnId || log.runtimeEvent.turnId === session.turnId))?.runtimeEvent?.eventId) || session.events.at(-1); }
 
 registerRuntimePlugin({ provider: "codex", label: "Codex", visual: { accent: '#e8e8e8', coreIcon: 'codex-mark' }, paths: { runtime: "/codex/runtime", twoDimensional: "/codex", threeDimensional: "/codex/3d" }, accepts: log => log.runtimeEvent?.provider === "codex", sourceLabel: log => log.runtimeEvent?.source === "codex-hook" ? "Codex Hook" : "Codex App Server", mapEvent: ({ base }) => base, connectionStatus: status => ({ hookGatewayState: status?.codexHookGatewayState, hookPort: status?.codexHookPort, appServerState: status?.codexAppServerState }), project: (logs, telemetry) => createCodexRuntimeSessionFromLogs(logs.filter(log => log.runtimeEvent?.provider === "codex"), telemetry as CodexRolloutTelemetry | null | undefined), loadTelemetry: async (sessionId, turnId, signal) => {

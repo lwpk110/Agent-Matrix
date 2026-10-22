@@ -22,7 +22,7 @@ test('按 user 边界和 parent tree 聚合 Claude Code，并只投影统计元�
     const snapshot = readClaudeDesktopTelemetry({ root });
     assert.equal(snapshot.status, 'ready');
     assert.deepEqual(snapshot.sessions, [{
-      source: 'claude-code', sessionId: 'session-1234', turnId: 'user-1', model: 'claude-sonnet', reasoningEffort: 'high', modelRequestCount: 2, latestRequest: { inputTokens: 20 }, contextMetadata: { instructionFileCount: null, observedAt: null, source: 'claude-transcript', scope: 'turn' }, promptMetadata: { systemSegmentCount: null, toolDefinitionCount: null, observedAt: null, source: 'claude-transcript', scope: 'turn' }, toolCallMetadata: [],
+      source: 'claude-code', sessionId: 'session-1234', turnId: 'user-1', model: 'claude-sonnet', reasoningEffort: 'high', modelRequestCount: 2, requests: [{ inputTokens: 20, cachedInputTokens: 10, outputTokens: 2, reasoningTokens: null }, { inputTokens: 20, cachedInputTokens: 8, outputTokens: 4, reasoningTokens: null }], latestRequest: { inputTokens: 20 }, contextMetadata: { instructionFileCount: null, observedAt: null, source: 'claude-transcript', scope: 'turn' }, promptMetadata: { systemSegmentCount: null, toolDefinitionCount: null, observedAt: null, source: 'claude-transcript', scope: 'turn' }, toolCallMetadata: [],
       turnUsage: { inputTokens: 40, cachedInputTokens: 11, outputTokens: 6, reasoningTokens: null, totalTokens: null, nativeInputTokens: 22, cacheCreationInputTokens: 7, cacheReadInputTokens: 11, usageSemantics: 'native-input-plus-cache-creation-plus-cache-read' }, durationMs: 321, timestamp: '2026-10-21T10:00:00.000Z',
     }]);
     assert.doesNotMatch(JSON.stringify(snapshot), /private|tool_result|content/);
@@ -44,6 +44,7 @@ test('识别当前 Claude CLI 的 sdk-cli 来源并提取统计元数据', async
     assert.equal(telemetry?.source, 'claude-code');
     assert.equal(telemetry?.model, 'claude-sonnet-5');
     assert.equal(telemetry?.modelRequestCount, 1);
+    assert.deepEqual(telemetry?.requests, [{ inputTokens: 15196, cachedInputTokens: 10205, outputTokens: 84, reasoningTokens: null }]);
     assert.deepEqual(telemetry?.contextMetadata?.instructionFileCount, 1);
     assert.deepEqual(telemetry?.promptMetadata && [telemetry.promptMetadata.systemSegmentCount, telemetry.promptMetadata.toolDefinitionCount], [1, 1]);
     assert.doesNotMatch(JSON.stringify(telemetry), /PRIVATE_/);

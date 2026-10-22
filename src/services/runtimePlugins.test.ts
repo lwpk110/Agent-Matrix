@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { LogEntry } from "../types/matrix";
-import { createRuntimeSessionFromLogs, findRuntimePluginByPath, getRuntimeConnection, getRuntimePlugin, registerRuntimePlugin } from "./runtimePlugins";
+import { createRuntimeSessionFromLogs, createRuntimeSessionsFromLogs, findRuntimePluginByPath, getRuntimeConnection, getRuntimePlugin, registerRuntimePlugin } from "./runtimePlugins";
 
 function entry(provider: string, id: string, name: string, extra: Partial<NonNullable<LogEntry["runtimeEvent"]>> = {}): LogEntry {
   return {
@@ -27,6 +27,16 @@ test("plugins project only their provider even when session, turn and call ident
   assert.equal(session.provider, "claude");
   assert.equal(session.events.length, 2);
   assert.equal(session.events.find(event => event.name === "PostToolUseFailure")?.status, "failed");
+});
+
+test("projects each provider session independently and orders the fleet by latest event", () => {
+  const older = entry("codex", "1", "UserPromptSubmit", { sessionId: "session-older", turnId: "turn-old", timestamp: "2026-10-20T00:00:01.000Z" });
+  const newer = entry("codex", "2", "UserPromptSubmit", { sessionId: "session-newer", turnId: "turn-new", timestamp: "2026-10-20T00:00:02.000Z" });
+  const otherProvider = entry("claude", "3", "SessionStart", { sessionId: "session-claude", turnId: "turn-claude", timestamp: "2026-10-20T00:00:03.000Z" });
+  const sessions = createRuntimeSessionsFromLogs(getRuntimePlugin("codex"), [older, newer, otherProvider]);
+  assert.deepEqual(sessions.map(session => session.id), ["session-newer", "session-older"]);
+  assert.equal(sessions[0].turnId, "turn-new");
+  assert.deepEqual(sessions.map(session => session.events.map(event => event.sessionId)), [["session-newer"], ["session-older"]]);
 });
 
 test("a registered third-party plugin drives projection without renderer changes", () => {
@@ -93,6 +103,21 @@ test("uses telemetry duration without inventing model rounds", () => {
   const session = createRuntimeSessionFromLogs(getRuntimePlugin("claude"), [first, last], { modelRequestCount: 3, durationMs: 99 });
   assert.equal(session?.durationMs, 99);
   assert.equal(session?.rounds.length, 0);
+});
+
+test("keeps redacted per-request telemetry separate from lifecycle model rounds", () => {
+  const session = createRuntimeSessionFromLogs(getRuntimePlugin("claude"), [entry("claude", "a", "SessionStart")], {
+    modelRequestCount: 3,
+    requests: [
+      { inputTokens: 120, cachedInputTokens: 70, outputTokens: 20, reasoningTokens: null },
+      { inputTokens: null, cachedInputTokens: null, outputTokens: 8, reasoningTokens: null },
+    ],
+  });
+  assert.equal(session?.rounds.length, 0);
+  assert.deepEqual(session?.rolloutTelemetry?.requests, [
+    { inputTokens: 120, cachedInputTokens: 70, outputTokens: 20, reasoningTokens: null },
+    { inputTokens: null, cachedInputTokens: null, outputTokens: 8, reasoningTokens: null },
+  ]);
 });
 
 test("Claude visual contract supplies a branded core glyph and telemetry is marked as request-derived", () => {

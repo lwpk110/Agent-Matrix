@@ -19,6 +19,7 @@ test('reads only the requested turn summary from a matching local rollout', asyn
     { type: 'turn_context', payload: { turn_id: turnId, model: 'gpt-6.1-sol', effort: 'high', summary: 'never expose this prompt' } },
     { type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 7200, cached_input_tokens: 5100, output_tokens: 42, reasoning_output_tokens: 16 }, model_context_window: 258400 } } },
     { type: 'token_usage_record', payload: { session_id: sessionId, turn_id: turnId, response_id: 'response-1', usage: { input_tokens: 7200, cached_input_tokens: 5100, output_tokens: 42, reasoning_output_tokens: 16 }, turn_token_usage: { input_tokens: 7200, cached_input_tokens: 5100, output_tokens: 42, reasoning_output_tokens: 16, total_tokens: 7242 } } },
+    { type: 'token_usage_record', payload: { session_id: sessionId, turn_id: turnId, response_id: 'response-2' } },
   ));
 
   try {
@@ -28,7 +29,11 @@ test('reads only the requested turn summary from a matching local rollout', asyn
       turnId,
       model: 'gpt-6.1-sol',
       reasoningEffort: 'high',
-      modelRequestCount: 1,
+      modelRequestCount: 2,
+      requests: [
+        { inputTokens: 7200, cachedInputTokens: 5100, outputTokens: 42, reasoningTokens: 16 },
+        { inputTokens: null, cachedInputTokens: null, outputTokens: null, reasoningTokens: null },
+      ],
       turnUsage: { inputTokens: 7200, cachedInputTokens: 5100, outputTokens: 42, reasoningTokens: 16, totalTokens: 7242 },
       latestRequest: { inputTokens: 7200, cachedInputTokens: 5100, outputTokens: 42, reasoningTokens: 16 },
       contextWindowTokens: 258400,
@@ -40,12 +45,17 @@ test('reads only the requested turn summary from a matching local rollout', asyn
       session_id: sessionId,
       turn_id: turnId,
       response_id: 'response-2',
+      usage: { input_tokens: 1800, cached_input_tokens: 1100, output_tokens: 28, reasoning_output_tokens: 8 },
       turn_token_usage: { input_tokens: 9000, cached_input_tokens: 6200, output_tokens: 70, reasoning_output_tokens: 22, total_tokens: 9070 },
     } }));
     const updated = await readCodexRolloutTelemetry(sessionId, turnId, root);
     assert.equal(updated?.turnUsage?.totalTokens, 9070);
     assert.equal(updated?.turnUsage?.inputTokens, 9000);
     assert.equal(updated?.modelRequestCount, 2);
+    assert.deepEqual(updated?.requests, [
+      { inputTokens: 7200, cachedInputTokens: 5100, outputTokens: 42, reasoningTokens: 16 },
+      { inputTokens: 1800, cachedInputTokens: 1100, outputTokens: 28, reasoningTokens: 8 },
+    ]);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

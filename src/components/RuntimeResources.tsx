@@ -14,6 +14,7 @@ const colors: Record<Resource, string> = { usage: "#83dce7", context: "#9dacf5",
 const detailColors = [colors.usage, colors.context, colors.memory, colors.capabilities, colors.prompts];
 const fmt = (n: number | null) => n === null ? "—" : n.toLocaleString("en-US");
 const isObservedTokenCount = (value: number | null): value is number => value !== null && Number.isFinite(value) && value >= 0;
+type MemoryFilePreview = { scope: "global" | "project"; name: string; content: string; truncated: boolean; updatedAt: string };
 
 function ResourceCards({ cards, expanded, id, onToggle }: {
   cards: Array<{ key: CardResource; icon: typeof Zap; value: string; unit: string; note: string; mini: ReactNode }>;
@@ -39,6 +40,8 @@ export function RuntimeResources({ events, logs, session, onInspect, onCorrelate
   onCorrelate: (callId: string) => void;
 }) {
   const [expanded, setExpanded] = useState<Resource | null>(null);
+  const [memoryFiles, setMemoryFiles] = useState<MemoryFilePreview[] | null>(null);
+  const [memoryFilesLoading, setMemoryFilesLoading] = useState(false);
   const panelRef = useRef<HTMLDialogElement>(null);
   const id = useId();
   const data = useMemo(() => runtimeResources(events), [events]);
@@ -62,6 +65,22 @@ export function RuntimeResources({ events, logs, session, onInspect, onCorrelate
     if (expanded && !panel.open) panel.showModal();
     else if (!expanded && panel.open) panel.close();
   }, [expanded]);
+  useEffect(() => {
+    if (expanded !== "memory" || session.provider !== "codex" || !session.isReal) {
+      setMemoryFiles(null);
+      setMemoryFilesLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setMemoryFiles(null);
+    setMemoryFilesLoading(true);
+    fetch(`/api/real/codex-memory?${new URLSearchParams({ sessionId: session.id })}`, { cache: "no-store", signal: controller.signal })
+      .then(response => response.ok ? response.json() as Promise<{ files: MemoryFilePreview[] }> : Promise.reject(new Error("Memory files unavailable")))
+      .then(result => setMemoryFiles(result.files))
+      .catch(error => { if (error.name !== "AbortError") setMemoryFiles([]); })
+      .finally(() => { if (!controller.signal.aborted) setMemoryFilesLoading(false); });
+    return () => controller.abort();
+  }, [expanded, session.id, session.isReal, session.provider]);
   if (session.isReal) {
     const rollout = session.rolloutTelemetry;
     const hasRolloutTelemetry = Boolean(session.capabilities?.rolloutTelemetry);
@@ -86,30 +105,68 @@ export function RuntimeResources({ events, logs, session, onInspect, onCorrelate
     const inputUsage = rollout?.turnUsage;
     const hasInputBreakdown = [inputUsage?.nativeInputTokens, inputUsage?.cacheCreationInputTokens, inputUsage?.cacheReadInputTokens]
       .some((value) => value !== null && value !== undefined);
-    const observedUsageRounds = session.rounds.filter((round): round is RuntimeSession["rounds"][number] & { inputTokens: number; outputTokens: number } => isObservedTokenCount(round.inputTokens) && isObservedTokenCount(round.outputTokens));
+    const requestSamples = rollout?.requests ?? [];
+    const requestUsage = requestSamples.length
+      ? requestSamples.map((request, index) => ({
+        id: `request-${index + 1}`,
+        requestNumber: Math.max(0, (modelRequestCount ?? requestSamples.length) - requestSamples.length) + index + 1,
+        ...request,
+      }))
+      : session.rounds.map((round, index) => ({ ...round, requestNumber: index + 1 }));
+    const observedUsageRounds = requestUsage.filter((round): round is typeof round & { inputTokens: number; outputTokens: number } => isObservedTokenCount(round.inputTokens) && isObservedTokenCount(round.outputTokens));
     const observedUsageMaximum = Math.max(...observedUsageRounds.map(round => round.inputTokens + round.outputTokens), 1);
+    const usageNote = requestUsage.length
+      ? observedUsageRounds.length === requestUsage.length
+        ? modelRequestCount !== null && modelRequestCount > requestUsage.length
+          ? `最近 ${requestUsage.length} / ${modelRequestCount} 次有用量`
+          : `${observedUsageRounds.length} 次请求已返回用量`
+        : `最近 ${requestUsage.length} 条中 ${observedUsageRounds.length} 条有完整用量`
+      : hasRolloutTelemetry ? `${modelRequestCount ?? "未采集"} 次模型响应` : "当前 Agent 未提供模型用量回执";
     const resourceCards = [
-      { key: "usage" as const, icon: Zap, value: hasRolloutTelemetry ? total : "未采集", unit: "本轮 tokens", note: hasRolloutTelemetry ? `${modelRequestCount ?? "未采集"} 次模型响应` : "当前 Agent 未提供模型用量回执", mini: observedUsageRounds.length
+      { key: "usage" as const, icon: Zap, value: hasRolloutTelemetry ? total : "未采集", unit: "tokens", note: usageNote, mini: observedUsageRounds.length
         ? observedUsageRounds.map(round => <i key={round.id} style={{ height: `${Math.min(100, Math.max(8, (round.inputTokens + round.outputTokens) / observedUsageMaximum * 100))}%` }} />)
         : <i className="is-unknown" /> },
       { key: "context" as const, icon: Layers3, value: contextPercent === null ? (contextTokens === null ? "未采集" : fmt(contextTokens)) : `${contextPercent.toFixed(1)}%`, unit: contextPercent === null ? "最近请求 tokens" : "窗口占用", note: contextMetadata?.instructionFileCount !== null && contextMetadata?.instructionFileCount !== undefined ? `${contextMetadata.instructionFileCount} 条规则快照文件 · Claude transcript` : contextTokens !== null && contextWindow ? `${fmt(contextTokens)} / ${fmt(contextWindow)} tokens · 最近请求` : contextTokens !== null ? `${fmt(contextTokens)} tokens · 窗口容量未采集` : `${events.filter(event => event.node === "context").length} 条上下文事件 · 容量未采集`, mini: contextPercent === null ? <i className="is-unknown" /> : <i style={{ width: `${contextPercent}%` }} /> },
-      { key: "memory" as const, icon: Database, value: memoryMetadata?.status === "present" ? `${memoryMetadata.fileCount}` : "未采集", unit: "当前项目 memory 文件", note: memoryMetadata?.status === "present" ? `${fmt(memoryMetadata.totalBytes)} bytes · 仅文件元数据` : memoryMetadata?.status === "missing" ? "当前项目未发现 memory 目录" : "未采集 memory 文件元数据", mini: memoryMetadata?.status === "present" ? <><i className="is-lit" /><i className={memoryMetadata.fileCount > 1 ? "is-lit" : ""} /><i className={memoryMetadata.fileCount > 2 ? "is-lit" : ""} /></> : <i className="is-unknown" /> },
-      { key: "capabilities" as const, icon: Library, value: `${session.calls.length}`, unit: "已观测调用", note: "按真实本地 / MCP 调用统计", mini: <><i className={session.calls.some(call => call.type === "local") ? "is-lit" : ""} /><i className={session.calls.some(call => call.type === "mcp") ? "is-lit" : ""} /></> },
+      { key: "memory" as const, icon: Database, value: memoryMetadata?.status === "present" ? `${memoryMetadata.fileCount}` : "未采集", unit: memoryMetadata?.globalFileCount !== undefined ? "全局 + 项目 memory 文件" : "当前项目 memory 文件", note: memoryMetadata?.status === "present" ? `${fmt(memoryMetadata.totalBytes)} bytes · 仅文件元数据` : memoryMetadata?.status === "missing" ? (memoryMetadata.globalFileCount !== undefined ? "未发现全局或项目 memory 文件" : "当前项目未发现 memory 目录") : "未采集 memory 文件元数据", mini: memoryMetadata?.status === "present" ? <><i className="is-lit" /><i className={memoryMetadata.fileCount > 1 ? "is-lit" : ""} /><i className={memoryMetadata.fileCount > 2 ? "is-lit" : ""} /></> : <i className="is-unknown" /> },
+      { key: "capabilities" as const, icon: Library, value: `${events.filter(event => event.node === "skill").length} · ${session.calls.filter(call => call.type === "mcp").length} · ${session.calls.filter(call => call.type === "local").length}`, unit: "Skill / MCP / 本地工具", note: `${session.calls.length} 次已观测工具调用 · 不代表完整能力目录`, mini: <><i className={events.some(event => event.node === "skill") ? "is-lit" : ""} /><i className={session.calls.some(call => call.type === "mcp") ? "is-lit" : ""} /><i className={session.calls.some(call => call.type === "local") ? "is-lit" : ""} /></> },
     ];
     const liveEvidence = expanded === "usage" ? events.filter(event => event.roundId || /model/i.test(event.name))
       : expanded === "context" ? events.filter(event => event.node === "context")
         : expanded === "capabilities" ? events.filter(event => ["tool", "mcp", "search", "gate", "hook", "skill"].includes(event.node))
           : expanded === "prompts" ? events.filter(event => event.node === "input") : [];
     return <section className="rr" aria-label="本回合资源概览">
-      <header className="rr-heading"><span><Activity size={13} /> 本回合资源 <small>仅显示已采集字段</small><button id={`${id}-prompts`} className="rr-prompt-link" aria-expanded={expanded === "prompts"} aria-controls={`${id}-panel`} onClick={() => setExpanded(expanded === "prompts" ? null : "prompts")}><MessageSquareText size={13} />提示词监控 <b>{session.capabilities?.promptTelemetry ? observedPrompts.length : "未采集"}</b></button></span><span className="rr-mock">LIVE · {(session.provider ?? "AGENT").toUpperCase()}</span></header>
+      <header className="rr-heading"><span><Activity size={13} /> 本回合资源 <small>先看摘要，点击展开</small><button id={`${id}-prompts`} className="rr-prompt-link" aria-expanded={expanded === "prompts"} aria-controls={`${id}-panel`} onClick={() => setExpanded(expanded === "prompts" ? null : "prompts")}><MessageSquareText size={13} />提示词监控 <b>{session.capabilities?.promptTelemetry ? observedPrompts.length : "未采集"}</b></button></span><span className="rr-mock">LIVE · {(session.provider ?? "AGENT").toUpperCase()}</span></header>
       <ResourceCards cards={resourceCards} expanded={expanded} id={id} onToggle={key => setExpanded(expanded === key ? null : key)} />
       <dialog ref={panelRef} className="rr-panel" id={`${id}-panel`} aria-labelledby={`${id}-${expanded ?? "usage"}-title`}
         onClose={() => setExpanded(null)} onClick={event => { if (event.target === event.currentTarget) panelRef.current?.close(); }}>
         {expanded && <><header><div><span className="rr-kicker">LIVE RESOURCE INSPECTOR</span><h3 id={`${id}-${expanded}-title`}>{labels[expanded]}</h3></div><button className="rr-close" aria-label="收起资源详情" onClick={() => panelRef.current?.close()}><X size={16} /></button></header>
-          <p className="rr-lead">数据来源：{hasRolloutTelemetry && (expanded === "usage" || expanded === "context") ? "本机运行时 telemetry 与生命周期事件" : "本机生命周期事件"}。未观测到的字段保留为“未采集”。</p>
-          {expanded === "usage" && <><div className="rr-metrics"><div><span>本轮输入 token</span><strong>{fmt(session.usage.inputTokens)}</strong></div><div><span>本轮输出 token</span><strong>{fmt(session.usage.outputTokens)}</strong></div><div><span>缓存输入 token</span><strong>{fmt(session.usage.cachedInputTokens)}</strong></div><div><span>推理 token</span><strong>{fmt(rollout?.turnUsage?.reasoningTokens ?? null)}</strong></div></div>{hasInputBreakdown && <div className="rr-metrics"><div><span>原生输入</span><strong>{fmt(inputUsage?.nativeInputTokens ?? null)}</strong></div><div><span>创建缓存</span><strong>{fmt(inputUsage?.cacheCreationInputTokens ?? null)}</strong></div><div><span>读取缓存</span><strong>{fmt(inputUsage?.cacheReadInputTokens ?? null)}</strong></div></div>}<p className="rr-explain">推理强度：{session.reasoningEffort}。{hasInputBreakdown ? "输入合计包含原生输入、创建缓存和读取缓存。" : hasRolloutTelemetry ? "用量来自本机回合回执；缓存输入是输入 token 的子集。" : "当前数据源未提供模型用量回执，未知值不会按 0 展示。"}</p></>}
+          <p className="rr-lead">数据来源：{expanded === "memory" && session.provider === "codex" ? "本机 Codex 记忆文件" : hasRolloutTelemetry && (expanded === "usage" || expanded === "context") ? "本机运行时 telemetry 与生命周期事件" : "本机生命周期事件"}。未观测到的字段保留为“未采集”。</p>
+          {expanded === "usage" && <>
+            <div className="rr-metrics"><div><span>本轮输入 token</span><strong>{fmt(session.usage.inputTokens)}</strong></div><div><span>本轮输出 token</span><strong>{fmt(session.usage.outputTokens)}</strong></div><div><span>缓存输入 token</span><strong>{fmt(session.usage.cachedInputTokens)}</strong></div><div><span>推理 token</span><strong>{fmt(rollout?.turnUsage?.reasoningTokens ?? null)}</strong></div></div>
+            {hasInputBreakdown && <div className="rr-metrics"><div><span>原生输入</span><strong>{fmt(inputUsage?.nativeInputTokens ?? null)}</strong></div><div><span>创建缓存</span><strong>{fmt(inputUsage?.cacheCreationInputTokens ?? null)}</strong></div><div><span>读取缓存</span><strong>{fmt(inputUsage?.cacheReadInputTokens ?? null)}</strong></div></div>}
+            <p className="rr-explain">推理强度：{session.reasoningEffort}。{hasInputBreakdown ? "输入合计包含原生输入、创建缓存和读取缓存。" : hasRolloutTelemetry ? "用量来自本机回合回执；缓存输入是输入 token 的子集。" : "当前数据源未提供模型用量回执，未知值不会按 0 展示。"}</p>
+            <div className="rr-subhead"><strong>逐次模型请求</strong><span>{requestUsage.length ? modelRequestCount !== null && modelRequestCount > requestUsage.length ? `最近 ${requestUsage.length} / ${modelRequestCount} 次 · ${observedUsageRounds.length} 条有完整用量` : `${observedUsageRounds.length} / ${requestUsage.length} 条有完整用量` : modelRequestCount !== null ? `${modelRequestCount} 次响应 · 无逐次明细` : "逐次用量未采集"}</span></div>
+            {observedUsageRounds.length ? <>
+              <div className="rr-rounds">{observedUsageRounds.map((round, index) => {
+                const cached = isObservedTokenCount(round.cachedInputTokens) && round.cachedInputTokens <= round.inputTokens ? round.cachedInputTokens : null;
+                return <div key={round.id}><span>请求 {round.requestNumber ?? index + 1}</span><div className="rr-round-track" role="img" aria-label={`请求 ${round.requestNumber ?? index + 1}：输入 ${fmt(round.inputTokens)} tokens，输出 ${fmt(round.outputTokens)} tokens`}><i style={{ width: `${(round.inputTokens - (cached ?? 0)) / observedUsageMaximum * 100}%` }} /><i className="rr-cache" style={{ width: `${(cached ?? 0) / observedUsageMaximum * 100}%` }} /><i className="rr-output" style={{ width: `${round.outputTokens / observedUsageMaximum * 100}%` }} /></div><span>{fmt(round.inputTokens)} 入 / {fmt(round.outputTokens)} 出</span></div>;
+              })}</div>
+              <div className="rr-legend"><span><i />非缓存输入</span><span><i className="rr-cache" />缓存输入</span><span><i className="rr-output" />输出</span></div>
+            </> : <p className="rr-empty">当前数据源没有返回逐次 Token 明细；上方只展示可验证的回合累计，用量不会被拆分估算。</p>}
+          </>}
           {expanded === "context" && <>{contextPercent !== null ? <><div className="rr-subhead"><strong>最近一次模型请求</strong><span>{fmt(contextTokens)} / {fmt(contextWindow)} tokens · {contextPercent.toFixed(1)}%</span></div><div className="rr-context-track" role="img" aria-label={`上下文窗口占用 ${contextPercent.toFixed(1)}%，${fmt(contextTokens)} / ${fmt(contextWindow)} tokens`}><i style={{ width: `${contextPercent}%`, background: colors.context }} /></div><p className="rr-explain">占用量和窗口容量来自本机运行时回执。</p></> : contextTokens !== null ? <p className="rr-explain">最近一次模型请求已采集 <b>{fmt(contextTokens)} tokens</b>；上下文窗口容量未采集，不能据此计算占用百分比。</p> : <p className="rr-explain">已采集 {events.filter(event => event.node === "context").length} 条上下文相关事件；最近请求 token 数和上下文窗口容量尚未采集。</p>}{contextMetadata && <p className="rr-explain">规则快照文件：<b>{contextMetadata.instructionFileCount === null ? "未采集" : `${contextMetadata.instructionFileCount} 条`}</b> · 来源 Claude transcript · {contextMetadata.observedAt ? new Date(contextMetadata.observedAt).toLocaleString("zh-CN", { hour12: false }) : "时间未采集"}。仅统计条目数，不读取文件路径或正文。</p>}</>}
-          {expanded === "memory" && <>{memoryMetadata?.status === "present" ? <div className="rr-prompt-list"><article><header><span className="rr-prompt-state is-completed">文件存在</span><time>{memoryMetadata.latestModifiedAt ? new Date(memoryMetadata.latestModifiedAt).toLocaleString("zh-CN", { hour12: false }) : "更新时间未采集"}</time></header><small>当前项目：{memoryMetadata.fileCount} 个文件 · {fmt(memoryMetadata.totalBytes)} bytes · 仅读取文件数量、大小和更新时间；未读取内容，不能推断已加载或已使用。</small></article></div> : <p className="rr-explain">{memoryMetadata?.status === "missing" ? "当前项目未发现 memory 目录。" : "未采集当前项目 memory 文件元数据。"} 无法判断记忆是否已加载或写入。</p>}</>}
+          {expanded === "memory" && <>
+            {session.provider === "codex" ? <>
+              <p className="rr-lead">已保存 <b>{memoryFiles?.length ?? memoryMetadata?.fileCount ?? "—"} 个文件</b>，本轮已读取 <b>未采集</b>。文件存在只代表已保存，不能据此判断它是否进入模型上下文。</p>
+              <p className="rr-explain">下面展示本机 Codex 全局与当前项目的 Markdown 记忆文件；正文按需加载，未采集本轮记忆读取记录。</p>
+              <div className="rr-memories">{memoryFilesLoading ? <p className="rr-empty">正在读取记忆文件…</p> : memoryFiles?.length ? memoryFiles.map(file => <article key={`${file.scope}-${file.name}`}>
+                <header><strong>{file.name}</strong><span>文件存在</span></header>
+                <div className="rr-tags"><span>{file.scope === "global" ? "全局" : "当前项目"}</span><span>Markdown</span><span>更新 {new Date(file.updatedAt).toLocaleString("zh-CN", { hour12: false })}</span></div>
+                <p>{file.content}{file.truncated ? "\n\n…（文件过大，已截断预览）" : ""}</p>
+                <details><summary>来源与使用位置</summary><code>{file.scope === "global" ? `全局记忆 / ${file.name}` : `当前项目记忆 / ${file.name}`}</code><p>文件已保存；本轮是否读取或带入上下文未采集。</p></details>
+              </article>) : <p className="rr-empty">没有可展示的 Markdown 记忆文件。</p>}</div>
+            </> : <>{memoryMetadata?.status === "present" ? <div className="rr-prompt-list"><article><header><span className="rr-prompt-state is-completed">文件存在</span><time>{memoryMetadata.latestModifiedAt ? new Date(memoryMetadata.latestModifiedAt).toLocaleString("zh-CN", { hour12: false }) : "更新时间未采集"}</time></header><small>当前项目 {memoryMetadata.fileCount} 个 memory 文件 / {fmt(memoryMetadata.totalBytes)} bytes · 仅读取文件元数据，未读取内容。</small></article></div> : <p className="rr-explain">{memoryMetadata?.status === "missing" ? "当前项目未发现 memory 目录。" : "未采集当前项目 memory 文件元数据。"} 无法判断记忆是否已加载或写入。</p>}</>}
+          </>}
           {expanded === "prompts" && <>
             <div className="rr-prompt-status"><div><span>已观测提交</span><strong>{observedPrompts.length}</strong></div><div><span>处理中</span><strong>{processingCount}</strong></div><div><span>等待后续事件</span><strong>{receivedCount}</strong></div><div><span>实际排队深度</span><strong>未观测</strong></div></div>
             <p className="rr-explain">状态由本机提示词、工具执行和最终回复事件推导。当前数据源没有提供独立的排队 / 出队信号；“等待后续事件”表示暂未看到执行事件，不等同于已确认进入队列。</p>

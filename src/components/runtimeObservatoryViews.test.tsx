@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { test } from "node:test";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
+import { prototypeSessionFixtures, prototypeSessionIdFromSearch, selectPrototypeSession } from "./runtimePrototypeFixtures";
 
 const cache = join(process.cwd(), "node_modules/.cache/runtime-observatory-views");
 
@@ -12,11 +14,11 @@ async function loadViews() {
   rmSync(cache, { recursive: true, force: true }); mkdirSync(cache, { recursive: true });
   (globalThis as { window?: unknown }).window = { location: { search: "" } };
   await build({ entryPoints: ["src/components/CodexSessionPrototype.tsx", "src/components/codex3d/Codex3DTopology.tsx", "src/components/CodexMockDetails.tsx", "src/components/RuntimeFleetPrototype.tsx", "src/components/RuntimeResources.tsx"], outdir: cache, bundle: true, format: "esm", platform: "node", jsx: "automatic", external: ["react", "react-dom", "react-dom/*", "motion/react", "three", "three/*", "lucide-react"], loader: { ".css": "empty" } });
-  const two = await import(join(cache, "CodexSessionPrototype.js"));
-  const three = await import(join(cache, "codex3d/Codex3DTopology.js"));
-  const details = await import(join(cache, "CodexMockDetails.js"));
-  const fleet = await import(join(cache, "RuntimeFleetPrototype.js"));
-  const resources = await import(join(cache, "RuntimeResources.js"));
+  const two = await import(pathToFileURL(join(cache, "CodexSessionPrototype.js")).href);
+  const three = await import(pathToFileURL(join(cache, "codex3d/Codex3DTopology.js")).href);
+  const details = await import(pathToFileURL(join(cache, "CodexMockDetails.js")).href);
+  const fleet = await import(pathToFileURL(join(cache, "RuntimeFleetPrototype.js")).href);
+  const resources = await import(pathToFileURL(join(cache, "RuntimeResources.js")).href);
   return { two, three, details, fleet, resources };
 }
 
@@ -28,11 +30,43 @@ test("runtime fleet prototype exposes searchable parallel sessions with status, 
     assert.match(html, /正在运行/);
     assert.match(html, /claude-sonnet-5/);
     assert.match(html, /最近活动/);
-    assert.match(html, /15,196/);
+    assert.match(html, /5,830/);
     assert.match(html, /turn-7c21/);
     assert.match(html, /同一工作区 · workspace-alpha/);
     assert.match(html, /历史会话/);
     assert.match(html, /aria-pressed="true"/);
+  } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
+});
+
+test("多会话选择投影出各自 provider、回合、事件和状态，不共用默认 Codex 事件", () => {
+  const selected = prototypeSessionFixtures.map(fixture => selectPrototypeSession(fixture.id));
+  const eventIds = selected.flatMap(item => item.session.events.map(event => event.id));
+  assert.equal(new Set(eventIds).size, eventIds.length);
+  for (const item of selected) {
+    assert.equal(item.session.provider, item.fixture.provider);
+    assert.equal(item.session.id, item.fixture.id);
+    assert.equal(item.session.turnId, item.fixture.turnId);
+    assert.ok(item.session.events.length > 0);
+    assert.ok(item.session.events.every(event => event.sessionId === item.fixture.id && event.turnId === item.fixture.turnId));
+  }
+  assert.equal(selected.find(item => item.fixture.id === "session-review")?.session.calls.some(call => call.status === "waiting"), true);
+  assert.equal(selected.find(item => item.fixture.id === "session-failed")?.session.calls.some(call => call.status === "failed"), true);
+  assert.ok(selected.find(item => item.fixture.id === "session-done")?.session.finalAnswer);
+  assert.equal(selectPrototypeSession("session-codex", "自定义演示输入").session.prompt, "自定义演示输入");
+  assert.equal(prototypeSessionIdFromSearch("?session=session-review"), "session-review");
+  assert.equal(prototypeSessionIdFromSearch("?session=unknown"), "session-codex");
+});
+
+test("prototype session deep link restores the matching provider in the main runtime view", async () => {
+  try {
+    const { two } = await loadViews();
+    const window = globalThis as { window?: { location: { search: string } } };
+    const previousSearch = window.window?.location.search ?? "";
+    if (window.window) window.window.location.search = "?session=session-review";
+    const html = renderToStaticMarkup(React.createElement(two.CodexSessionPrototype, { prototypeMode: true, logs: [] }));
+    assert.match(html, /Claude Code Runtime/);
+    assert.match(html, /PR 复核/);
+    if (window.window) window.window.location.search = previousSearch;
   } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
 });
 
@@ -44,7 +78,7 @@ async function loadRoute() {
     export { createRuntimeSessionFromLogs, getRuntimePlugin, registerRuntimePlugin } from "./src/services/runtimePlugins";
     export { createRuntimeTelemetryPoller } from "./src/services/runtimeObservation";
   `, resolveDir: process.cwd(), sourcefile: "runtime-observatory-route-entry.tsx" }, outfile: join(cache, "route.js"), bundle: true, format: "esm", platform: "node", jsx: "automatic", external: ["react", "react-dom", "react-dom/*", "motion/react", "three", "three/*", "lucide-react"], loader: { ".css": "empty" } });
-  return import(join(cache, "route.js"));
+  return import(pathToFileURL(join(cache, "route.js")).href);
 }
 
 test("empty real views never render prototype content and prototypes ignore real logs", async () => {
@@ -138,9 +172,34 @@ test("Claude visual uses request metadata language and cache-inclusive input wor
     assert.match(html, /提示词监控/);
     assert.match(html, /未采集/);
     assert.equal(html.match(/rr-card rr-card-/g)?.length, 4);
-    const model = await import(join(process.cwd(), "src/components/codex3d/model.ts"));
+    const model = await import(pathToFileURL(join(process.cwd(), "src/components/codex3d/model.ts")).href);
     assert.notDeepEqual(model.coreGlyph("activity"), model.coreGlyph("sparkles"));
     assert.ok(three.Codex3DTopology);
+  } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
+});
+
+test("live runtime page lists and selects only real sessions for the active provider", async () => {
+  try {
+    const { two } = await loadViews();
+    const browserWindow = globalThis as { window?: { location: { search: string } } };
+    const previousSearch = browserWindow.window?.location.search ?? "";
+    const event = (id: string, sessionId: string, prompt: string, timestamp: string) => ({
+      id, timestamp, agentTag: "CODEX", agentColor: "cyan", category: "system", message: prompt,
+      runtimeEvent: { provider: "codex", source: "codex-hook", eventId: id, eventName: "UserPromptSubmit", sessionId, turnId: `turn-${sessionId}`, phase: "prompt", hasToolResponse: false, timestamp, details: JSON.stringify({ prompt }) },
+    });
+    const logs = [event("a", "session-a", "A real task", "2026-10-20T00:00:01.000Z"), event("b", "session-b", "Another real task", "2026-10-20T00:00:02.000Z")];
+    const html = renderToStaticMarkup(React.createElement(two.CodexSessionPrototype, { logs, connectionState: "connected" }));
+    assert.match(html, /本地会话/);
+    assert.match(html, /A real task/);
+    assert.match(html, /Another real task/);
+    assert.match(html, /LIVE · 本地运行时事件/);
+    assert.doesNotMatch(html, /PR 复核|session-review|仅原型数据/);
+    assert.match(html, /当前会话.*session-b/);
+    if (browserWindow.window) browserWindow.window.location.search = "?session=session-a";
+    const restored = renderToStaticMarkup(React.createElement(two.CodexSessionPrototype, { logs, connectionState: "connected" }));
+    assert.match(restored, /当前会话.*session-a/);
+    assert.match(restored, /aria-pressed="true"[^>]*>.*A real task/s);
+    if (browserWindow.window) browserWindow.window.location.search = previousSearch;
   } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
 });
 
@@ -168,6 +227,48 @@ test("实时资源概览不会将缺失的逐次 Token 回执渲染为零值柱"
   } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
 });
 
+test("实时资源摘要沿用原型提示文案并按已观测能力分类", async () => {
+  try {
+    const { resources } = await loadViews();
+    const session = {
+      id: "live", provider: "codex", turnId: "turn", cwd: "未采集", prompt: "", model: "GPT", reasoningEffort: "未采集", instruction: "", skillText: "", skillCatalog: [], finalAnswer: "", events: [],
+      calls: [
+        { id: "mcp-1", roundId: "turn", name: "search", title: "search", type: "mcp", arguments: {}, result: {}, durationMs: null, status: "completed" },
+        { id: "local-1", roundId: "turn", name: "read", title: "read", type: "local", arguments: {}, result: {}, durationMs: null, status: "completed" },
+      ],
+      rounds: [], usage: { inputTokens: null, outputTokens: null, cachedInputTokens: null }, durationMs: null, schemaVersion: "agent-matrix.runtime.v1", isMock: false, isReal: true, dataSource: "live",
+      capabilities: { promptTelemetry: false },
+    };
+    const events = [{ id: "skill-1", sessionId: "live", turnId: "turn", offsetMs: 0, time: "2026-10-22T00:00:00.000Z", name: "skill.loaded", kind: "skill", node: "skill", relatedNodes: [], source: "Codex Hook", title: "Skill loaded", summary: "Skill activation observed", status: "completed" }];
+    const html = renderToStaticMarkup(React.createElement(resources.RuntimeResources, { events, logs: [], session, onInspect: () => {}, onCorrelate: () => {} }));
+    assert.match(html, /本回合资源 <small>先看摘要，点击展开<\/small>/);
+    assert.match(html, /1 · 1 · 1/);
+    assert.match(html, /Skill \/ MCP \/ 本地工具/);
+    assert.match(html, /2 次已观测工具调用 · 不代表完整能力目录/);
+  } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
+});
+
+
+test("实时 Token 摘要从独立 telemetry 显示请求数，不覆盖生命周期回合关联", async () => {
+  try {
+    const { resources } = await loadViews();
+    const session = {
+      id: "live", provider: "codex", turnId: "turn", cwd: "未采集", prompt: "", model: "GPT", reasoningEffort: "high", instruction: "", skillText: "", skillCatalog: [], finalAnswer: "", events: [],
+      calls: [{ id: "call-1", roundId: "request-event", name: "search", title: "search", type: "mcp", arguments: {}, result: {}, durationMs: null, status: "completed" }],
+      rounds: [{ id: "request-event", inputTokens: null, cachedInputTokens: null, outputTokens: null, consumedCallIds: [], callIds: ["call-1"], response: "" }],
+      rolloutTelemetry: { modelRequestCount: 3, requests: [
+        { inputTokens: 120, cachedInputTokens: 70, outputTokens: 20, reasoningTokens: 4 },
+        { inputTokens: 90, cachedInputTokens: 0, outputTokens: 10, reasoningTokens: 2 },
+      ], turnUsage: { inputTokens: 210, cachedInputTokens: 70, outputTokens: 30, totalTokens: 240 } },
+      usage: { inputTokens: 210, outputTokens: 30, cachedInputTokens: 70 }, durationMs: null, schemaVersion: "agent-matrix.runtime.v1", isMock: false, isReal: true, dataSource: "live", capabilities: { rolloutTelemetry: true, promptTelemetry: false },
+    };
+    const html = renderToStaticMarkup(React.createElement(resources.RuntimeResources, { events: [], logs: [], session, onInspect: () => {}, onCorrelate: () => {} }));
+    assert.match(html, /<strong>240<small>tokens<\/small><\/strong>/);
+    assert.match(html, /最近 2 \/ 3 次有用量/);
+    assert.match(html, /height:100%/);
+    assert.match(html, /height:71\.42857142857143%/);
+  } finally { if (existsSync(cache)) rmSync(cache, { recursive: true, force: true }); }
+});
 
 test("Codex and Claude use their provider brand marks in the shared runtime plugin contract", async () => {
   try {

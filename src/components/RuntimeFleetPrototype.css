@@ -1,4 +1,4 @@
-.rt-fleet-prototype .cp-shell { grid-template-columns: 296px 212px minmax(0, 1fr); }
+.rt-has-fleet .cp-shell { grid-template-columns: 296px 212px minmax(0, 1fr); }
 .rfp-panel { min-width: 0; min-height: calc(100vh - 66px); padding: 23px 14px 16px; border-right: 1px solid #29404d; background: #0b151b; color: #d8e3e8; display: flex; flex-direction: column; gap: 12px; }
 .rfp-header { display: flex; align-items: center; justify-content: space-between; }
 .rfp-kicker { color: #71949c; font: 9px/1.3 Consolas, monospace; letter-spacing: 1px; }
@@ -51,8 +51,8 @@
 .rfp-footer { display: grid; gap: 7px; margin-top: auto; padding-top: 12px; border-top: 1px solid #20343c; color: #6f898e; font-size: 9px; }
 .rfp-footer span { display: flex; align-items: center; gap: 6px; }
 .rfp-footer svg { color: #88a5a9; }
-.rt-fleet-prototype .cp-main { max-width: 1560px; }
-@media (max-width: 1250px) { .rt-fleet-prototype .cp-shell { grid-template-columns: 270px 196px minmax(0, 1fr); } .rt-fleet-prototype .cp-main { padding-inline: 22px; } }
-@media (max-width: 1000px) { .rt-fleet-prototype .cp-sidebar { display: none; } .rfp-panel { min-height: auto; max-height: 440px; overflow-y: auto; border-bottom: 1px solid #29404d; border-right: 0; } .rfp-panel > * { flex-shrink: 0; } .rt-fleet-prototype .cp-shell { display: flex; flex-direction: column; } .rfp-session-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rfp-footer { grid-template-columns: repeat(3, max-content); justify-content: space-between; } }
-@media (max-width: 600px) { .rfp-panel { padding: 15px 12px; max-height: 390px; } .rfp-session-list { grid-template-columns: 1fr; overflow: auto; } .rfp-footer { grid-template-columns: 1fr 1fr; } .rfp-evidence { grid-column: 1 / -1; } .rt-fleet-prototype .cp-main { padding-inline: 12px; } }
+.rt-has-fleet .cp-main { max-width: 1560px; }
+@media (max-width: 1250px) { .rt-has-fleet .cp-shell { grid-template-columns: 270px 196px minmax(0, 1fr); } .rt-has-fleet .cp-main { padding-inline: 22px; } }
+@media (max-width: 1000px) { .rt-has-fleet .cp-sidebar { display: none; } .rfp-panel { min-height: auto; max-height: 440px; overflow-y: auto; border-bottom: 1px solid #29404d; border-right: 0; } .rfp-panel > * { flex-shrink: 0; } .rt-has-fleet .cp-shell { display: flex; flex-direction: column; } .rfp-session-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rfp-footer { grid-template-columns: repeat(3, max-content); justify-content: space-between; } }
+@media (max-width: 600px) { .rfp-panel { padding: 15px 12px; max-height: 390px; } .rfp-session-list { grid-template-columns: 1fr; overflow: auto; } .rfp-footer { grid-template-columns: 1fr 1fr; } .rfp-evidence { grid-column: 1 / -1; } .rt-has-fleet .cp-main { padding-inline: 12px; } }
 @media (prefers-reduced-motion: reduce) { .rfp-session, .rfp-history-toggle svg { transition: none; } }

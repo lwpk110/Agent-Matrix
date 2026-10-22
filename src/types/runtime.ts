@@ -33,6 +33,13 @@ export interface RuntimeEvent {
   content?: string;
 }
 
+export interface RuntimeRequestUsage {
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+}
+
 /** 各运行时可选提供的已脱敏回合遥测。缺失字段必须保持未采集。 */
 export interface RuntimeTelemetry {
   sessionId?: string | null;
@@ -41,13 +48,14 @@ export interface RuntimeTelemetry {
   modelSource?: 'request-statistics' | 'hook-declared' | null;
   reasoningEffort?: string | null;
   modelRequestCount?: number | null;
+  requests?: RuntimeRequestUsage[];
   durationMs?: number | null;
   contextWindowTokens?: number | null;
   latestRequest?: { inputTokens?: number | null } | null;
   contextMetadata?: { instructionFileCount: number | null; observedAt: string | null; source: 'claude-transcript'; scope: 'turn' | 'session' } | null;
   promptMetadata?: { systemSegmentCount: number | null; toolDefinitionCount: number | null; observedAt: string | null; source: 'claude-transcript'; scope: 'turn' | 'session' } | null;
   toolCallMetadata?: Array<{ callId: string; name: string; resultObserved: boolean; isError: boolean | null; observedAt: string | null }>;
-  memoryMetadata?: { status: 'present' | 'missing' | 'unavailable'; fileCount: number; totalBytes: number; latestModifiedAt: string | null } | null;
+  memoryMetadata?: { status: 'present' | 'missing' | 'unavailable'; fileCount: number; totalBytes: number; latestModifiedAt: string | null; globalFileCount?: number; projectFileCount?: number; globalBytes?: number; projectBytes?: number } | null;
   turnUsage?: {
     inputTokens?: number | null;
     nativeInputTokens?: number | null;

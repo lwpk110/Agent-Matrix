@@ -37,15 +37,15 @@ import { runtimeFlow } from "./runtimeFlow";
 import { advanceRuntimeVisualPlayback, createRuntimeVisualPlayback, currentRuntimeVisualCue } from "./runtimeVisualPlayback";
 import type { RuntimeLeaf } from "./runtimeLeafModel";
 import type { LogEntry, RealSystemStatus, WsConnectionState } from "../types/matrix";
-import { createRuntimeSessionFromLogs, getRuntimeConnection, getRuntimePlugin, listRuntimePlugins } from "../services/runtimePlugins";
+import { createRuntimeSessionFromLogs, createRuntimeSessionsFromLogs, getRuntimeConnection, getRuntimePlugin, listRuntimePlugins } from "../services/runtimePlugins";
 import type { RuntimeEvent } from "../types/runtime";
 import { createEmptyRuntimeSession, useRuntimeTelemetry } from "../services/runtimeObservation";
 import { RuntimeEmptyState } from "./RuntimeEmptyState";
-import { RuntimeFleetPrototype } from "./RuntimeFleetPrototype";
+import { RuntimeFleetPrototype, type RuntimeFleetSession } from "./RuntimeFleetPrototype";
 import { codexCoreStatus } from "./codexCoreStatus";
+import { prototypeSessionIdFromSearch, selectPrototypeSession } from "./runtimePrototypeFixtures";
 import "./RuntimeObservatory.css";
 import {
-  createCodexRuntimeMock,
   MOCK_USER_PROMPT,
   mockEventsForNode,
   mockEventsForCall,
@@ -291,28 +291,32 @@ export function CodexSessionPrototype({
   const [progress, setProgress] = useState(Infinity);
   const [draft, setDraft] = useState(MOCK_USER_PROMPT);
   const [submitted, setSubmitted] = useState(MOCK_USER_PROMPT);
-  const [selectedFleetSession, setSelectedFleetSession] = useState("session-codex");
-  const plugin = getRuntimePlugin(provider);
+  const [selectedFleetSession, setSelectedFleetSession] = useState(() => prototypeMode ? prototypeSessionIdFromSearch(window.location.search) : new URLSearchParams(window.location.search).get("session") || "");
+  const prototypeSelection = useMemo(() => prototypeMode
+    ? selectPrototypeSession(selectedFleetSession, selectedFleetSession === "session-codex" ? submitted : undefined)
+    : null, [prototypeMode, selectedFleetSession, submitted]);
+  const activeProvider = prototypeSelection?.fixture.provider ?? provider;
+  const plugin = getRuntimePlugin(activeProvider);
   const runtimeConnection = getRuntimeConnection(plugin, realStatus);
   const runtimeOffline = runtimeConnection.hookGatewayState === "offline" || runtimeConnection.appServerState === "offline";
   const providerName = plugin.label;
-  const observedLiveSession = useMemo(() => prototypeMode ? null : createRuntimeSessionFromLogs(plugin, logs), [logs, plugin, prototypeMode]);
+  const availableLiveSessions = useMemo(() => prototypeMode ? [] : createRuntimeSessionsFromLogs(plugin, logs), [logs, plugin, prototypeMode]);
+  const observedLiveSession = availableLiveSessions.find(item => item.id === selectedFleetSession) || availableLiveSessions[0] || null;
   const liveTelemetry = useRuntimeTelemetry(plugin, observedLiveSession);
-  const liveSession = useMemo(() => prototypeMode ? null : createRuntimeSessionFromLogs(plugin, logs, liveTelemetry), [logs, liveTelemetry, plugin, prototypeMode]);
-  const demoSession = useMemo(() => {
-    if (!prototypeMode) return null;
-    const demo = createCodexRuntimeMock(submitted);
-    const scenario = selectedFleetSession === "session-codex"
-      ? { id: "session-codex", turnId: "turn-a940", prompt: submitted, model: "GPT-5.4", tokens: 8420 }
-      : selectedFleetSession === "session-active"
-        ? { id: "session-active", turnId: "turn-7c21", prompt: "梳理 Agent-Matrix 的模块边界并验证观测链路。", model: "claude-sonnet-5", tokens: 15196 }
-        : selectedFleetSession === "session-review"
-          ? { id: "session-review", turnId: "turn-1b93", prompt: "复核变更风险并汇总待确认事项。", model: "claude-opus-4", tokens: 22480 }
-          : selectedFleetSession === "session-failed"
-            ? { id: "session-failed", turnId: "turn-08fd", prompt: "检查运行时事件网关状态。", model: "GPT-5.4", tokens: 0 }
-            : { id: "session-done", turnId: "turn-72e1", prompt: "盘点项目依赖并总结运行状态。", model: "claude-sonnet-5", tokens: 38210 };
-    return { ...demo, id: scenario.id, turnId: scenario.turnId, prompt: scenario.prompt, model: scenario.model, usage: { ...demo.usage, inputTokens: scenario.tokens } };
-  }, [prototypeMode, submitted, selectedFleetSession]);
+  const liveSession = useMemo(() => prototypeMode || !observedLiveSession ? null : createRuntimeSessionFromLogs(plugin, logs.filter(log => log.runtimeEvent?.sessionId === observedLiveSession.id), liveTelemetry), [logs, liveTelemetry, observedLiveSession, plugin, prototypeMode]);
+  const fleetSessions = useMemo<RuntimeFleetSession[]>(() => availableLiveSessions.map(item => {
+    const latestLog = [...logs].reverse().find(log => log.runtimeEvent?.provider === plugin.provider && log.runtimeEvent.sessionId === item.id);
+    const timestamp = latestLog?.runtimeEvent?.timestamp || latestLog?.timestamp;
+    const elapsed = timestamp ? Math.max(0, Date.now() - Date.parse(timestamp)) : 0;
+    const age = elapsed < 60_000 ? "刚刚" : elapsed < 3_600_000 ? `${Math.floor(elapsed / 60_000)} 分钟` : `${Math.floor(elapsed / 3_600_000)} 小时`;
+    const latestEvent = item.events.at(-1);
+    const state: RuntimeFleetSession["state"] = latestEvent?.status === "failed" ? "failed" : latestEvent?.status === "waiting" ? "waiting" : latestEvent?.node === "output" ? "completed" : "running";
+    const prompt = item.prompt.trim();
+    const label = prompt ? (prompt.length > 34 ? `${prompt.slice(0, 34)}…` : prompt) : item.id;
+    const tokens = item.usage.inputTokens !== null && item.usage.outputTokens !== null ? item.usage.inputTokens + item.usage.outputTokens : null;
+    return { id: item.id, turnId: item.turnId, provider: plugin.provider, label, state, model: item.model, activity: latestEvent?.title || "已采集运行时事件", age, tokens };
+  }), [availableLiveSessions, logs, plugin.provider]);
+  const demoSession = prototypeSelection?.session ?? null;
   const emptyState = historyError ? "error" : connectionState === "offline" || runtimeOffline ? "offline" : "waiting";
   const session = liveSession || demoSession || createEmptyRuntimeSession(plugin.provider, emptyState);
   const liveMode = Boolean(liveSession);
@@ -476,6 +480,22 @@ export function CodexSessionPrototype({
     setCallFilter(null);
     setFocusedEvent(null);
   };
+  const selectFleetSession = (id: string) => {
+    setSelectedFleetSession(id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("session", id);
+    url.searchParams.delete("node");
+    window.history.replaceState({}, "", url);
+    setProgress(Infinity);
+    setReplaying(false);
+    setPlaying(true);
+    setSelected(null);
+    setCallFilter(null);
+    setFocusedEvent(null);
+    setShowAll(false);
+    setEventQuery("");
+    setKindFilter("all");
+  };
   const close = () => {
     setSelected(null);
   };
@@ -576,7 +596,7 @@ export function CodexSessionPrototype({
 
   return (
     <div
-      className={`cp-app cp-runtime-prototype ${prototypeMode ? "rt-fleet-prototype" : ""} ${playing ? "rt-motion-on" : "rt-motion-off"}`}
+      className={`cp-app cp-runtime-prototype ${prototypeMode ? "rt-fleet-prototype" : ""} ${!emptyMode ? "rt-has-fleet" : ""} ${playing ? "rt-motion-on" : "rt-motion-off"}`}
       data-runtime-provider={plugin.provider}
     >
       <header className="cp-header" inert={Boolean(selected)}>
@@ -609,7 +629,7 @@ export function CodexSessionPrototype({
         </div>
       </header>
       <div className="cp-shell" inert={Boolean(selected)}>
-        {prototypeMode && <RuntimeFleetPrototype selectedId={selectedFleetSession} onSelect={setSelectedFleetSession} />}
+        {(prototypeMode || availableLiveSessions.length > 0) && <RuntimeFleetPrototype selectedId={prototypeMode ? selectedFleetSession : observedLiveSession?.id || ""} onSelect={selectFleetSession} items={prototypeMode ? undefined : fleetSessions} live={!prototypeMode} />}
         <aside className="cp-sidebar" aria-label="当前会话运行阶段">
           <div className="cp-workspace">
             <span className="cp-project-icon">

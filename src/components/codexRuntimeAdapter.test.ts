@@ -61,6 +61,10 @@ test("uses matching rollout telemetry for model, effort and turn token totals", 
     model: "gpt-6.1-sol",
     reasoningEffort: "high",
     modelRequestCount: 2,
+    requests: [
+      { inputTokens: 7100, cachedInputTokens: 5000, outputTokens: 42, reasoningTokens: 16 },
+      { inputTokens: 100, cachedInputTokens: 70, outputTokens: 0, reasoningTokens: 0 },
+    ],
     turnUsage: { inputTokens: 7200, cachedInputTokens: 5100, outputTokens: 42, reasoningTokens: 16, totalTokens: 7242 },
     latestRequest: { inputTokens: 7100, cachedInputTokens: 5000, outputTokens: 42, reasoningTokens: 16 },
     contextWindowTokens: 258400,
@@ -74,6 +78,23 @@ test("uses matching rollout telemetry for model, effort and turn token totals", 
   assert.equal(session.usage.outputTokens, 42);
   assert.equal(session.rolloutTelemetry?.modelRequestCount, 2);
   assert.equal(session.rolloutTelemetry?.contextWindowTokens, 258400);
+  assert.deepEqual(session.rounds, []);
+});
+
+test("keeps telemetry request totals separate from event rounds and their call associations", () => {
+  const session = createCodexRuntimeSessionFromLogs([
+    log("1", "session-linked", "turn-linked", "AppServerModelRequest", { requestId: "request-a", call_ids: ["call-a"] }),
+    log("2", "session-linked", "turn-linked", "AppServerMcpToolCall", { server: "docs", tool: "search", status: "completed", arguments: {} }, { phase: "completed", toolUseId: "call-a", toolName: "docs/search" }),
+  ], {
+    sessionId: "session-linked", turnId: "turn-linked", model: "gpt-6.1-sol", reasoningEffort: null, modelRequestCount: 1,
+    requests: [{ inputTokens: 100, cachedInputTokens: 20, outputTokens: 5, reasoningTokens: 1 }],
+    turnUsage: null, latestRequest: null, contextWindowTokens: null,
+  });
+
+  assert.ok(session);
+  assert.equal(session.rounds.length, 1);
+  assert.deepEqual(session.rounds[0].callIds, ["call-a"]);
+  assert.deepEqual(session.rolloutTelemetry?.requests[0], { inputTokens: 100, cachedInputTokens: 20, outputTokens: 5, reasoningTokens: 1 });
 });
 
 test("removes ambient browser metadata from the user-facing prompt", () => {

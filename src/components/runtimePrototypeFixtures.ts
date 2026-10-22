@@ -30,6 +30,16 @@ export function prototypeSessionFixture(id: string) {
   return prototypeSessionFixtures.find(item => item.id === id) ?? prototypeSessionFixtures[1];
 }
 
+export function prototypeSessionIdFromSearch(search: string) {
+  const id = new URLSearchParams(search).get("session");
+  return id && prototypeSessionFixtures.some(item => item.id === id) ? id : "session-codex";
+}
+
+export function selectPrototypeSession(id: string, prompt?: string) {
+  const fixture = prototypeSessionFixture(id);
+  return { fixture, session: createPrototypeSession(fixture, prompt) };
+}
+
 function remapValue(value: unknown, ids: Map<string, string>): unknown {
   if (typeof value === "string") return ids.get(value) ?? value;
   if (Array.isArray(value)) return value.map(item => remapValue(item, ids));
@@ -104,6 +114,9 @@ export function createPrototypeSession(fixture: PrototypeSessionFixture, prompt?
     id: `${fixture.id}:${event.id}`,
     sessionId: fixture.id,
     turnId: fixture.turnId,
+    source: fixture.provider === "claude"
+      ? event.source === "Hook" ? "Claude Code Hook" : event.source === "App Server" ? "Claude transcript" : event.source
+      : event.source,
     callId: event.callId ? idMap.get(event.callId) : undefined,
     roundId: event.roundId ? idMap.get(event.roundId) : undefined,
     input: remapValue(event.input, idMap) as Record<string, unknown> | undefined,
